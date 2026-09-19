@@ -23,10 +23,12 @@ def read(name: str) -> str:
         return f.read()
 
 
-def token() -> str:
+def token(owner: str) -> str:
+    # Naming the account avoids Git Credential Manager's account picker when
+    # several GitHub logins are saved on the PC.
     out = subprocess.run(
         ["git", "credential", "fill"],
-        input="protocol=https\nhost=github.com\n\n",
+        input=f"protocol=https\nhost=github.com\nusername={owner}\n\n",
         capture_output=True,
         text=True,
         check=True,
@@ -67,7 +69,7 @@ def main() -> None:
         "**Đã cài rồi:** mở Spoty → MENU → Cập nhật (OTA).\n\n"
         "`update.json` và `spoty-update.tar.gz` là file dùng cho OTA."
     )
-    tok = token()
+    tok = token(repo.split("/")[0])
     rel = call(
         f"https://api.github.com/repos/{repo}/releases",
         tok,
