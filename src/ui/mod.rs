@@ -3,6 +3,7 @@
 pub mod demo;
 mod draw;
 pub mod theme;
+mod telex;
 pub mod widgets;
 
 use std::collections::{HashMap, HashSet};
@@ -1309,41 +1310,51 @@ impl App {
                 Button::Start if !repeat => self.open_menu(),
                 _ => {}
             },
-            View::Search(kb) => match b {
-                Button::Up => kb.move_by(0, -1),
-                Button::Down => kb.move_by(0, 1),
-                Button::Left => kb.move_by(-1, 0),
-                Button::Right => kb.move_by(1, 0),
-                Button::A => {
-                    if kb.press() {
-                        let q = kb.text.trim().to_string();
-                        self.open_source(Source::Search(q), None);
-                    }
-                }
-                Button::X if !repeat => {
-                    if !kb.text.is_empty() && !kb.text.ends_with(' ') {
-                        kb.text.push(' ');
-                    }
-                }
-                Button::Select if !repeat => kb.text.clear(),
-                Button::Start if !repeat => {
-                    let q = kb.text.trim().to_string();
-                    if !q.is_empty() {
-                        self.open_source(Source::Search(q), None);
-                    }
-                }
-                Button::B => {
-                    if kb.text.is_empty() {
-                        if !repeat {
-                            self.stack.pop();
+            View::Search(kb) => {
+                let vi = kb.vi;
+                match b {
+                    Button::Up => kb.move_by(0, -1),
+                    Button::Down => kb.move_by(0, 1),
+                    Button::Left => kb.move_by(-1, 0),
+                    Button::Right => kb.move_by(1, 0),
+                    Button::A => {
+                        if kb.press() {
+                            let q = kb.text.trim().to_string();
+                            self.open_source(Source::Search(q), None);
+                            return;
                         }
-                    } else {
-                        kb.text.pop();
                     }
+                    Button::X if !repeat => kb.space(),
+                    Button::Select if !repeat => kb.clear(),
+                    Button::L1 if !repeat => kb.vi = !kb.vi,
+                    Button::Start if !repeat => {
+                        let q = kb.text.trim().to_string();
+                        if !q.is_empty() {
+                            self.open_source(Source::Search(q), None);
+                            return;
+                        }
+                    }
+                    Button::B => {
+                        if kb.text.is_empty() {
+                            if !repeat {
+                                self.stack.pop();
+                            }
+                            return;
+                        }
+                        kb.backspace();
+                    }
+                    Button::Y if !repeat => {
+                        self.open_now_playing();
+                        return;
+                    }
+                    _ => {}
                 }
-                Button::Y if !repeat => self.open_now_playing(),
-                _ => {}
-            },
+                if kb.vi != vi {
+                    // Remember the layout for next time.
+                    self.cfg.search_keyboard = if kb.vi { "vi" } else { "en" }.into();
+                    self.cfg.save(&self.paths);
+                }
+            }
             View::Feed(fs) => {
                 let lens: Vec<usize> = match &self.feed {
                     Some(Ok(s)) => s.iter().map(|x| x.items.len()).collect(),
@@ -1689,7 +1700,10 @@ impl App {
         match sel {
             0 => self.open_feed(),
             1 => self.open_source(Source::Liked, None),
-            2 => self.stack.push(View::Search(Keyboard::default())),
+            2 => {
+                let vi = self.cfg.search_keyboard != "en";
+                self.stack.push(View::Search(Keyboard::new(vi)));
+            }
             3 => self.open_local_home(),
             n => match &self.playlists {
                 Some(Ok(list)) => {

@@ -272,12 +272,23 @@ pub fn screenshots(mut fonts: Fonts, dir: &Path) {
     app.menu = None::<Menu>;
 
     app.stack.truncate(1);
-    app.stack.push(View::Search(Keyboard {
-        text: "son tung".into(),
-        row: 2,
-        col: 3,
-    }));
+    let mut kb = Keyboard::new(true);
+    for k in "nhacj lanhf chuwa tinhf".chars() {
+        if k == ' ' {
+            kb.space();
+        } else {
+            kb.type_char(k);
+        }
+    }
+    kb.row = 2;
+    kb.col = 3;
+    app.stack.push(View::Search(kb.clone()));
     render(&mut c, &mut fonts, &mut ic, &mut app, dir, "06_search");
+    kb.row = 0;
+    kb.move_by(0, -1);
+    app.stack.push(View::Search(kb));
+    render(&mut c, &mut fonts, &mut ic, &mut app, dir, "06b_search_clear");
+    app.stack.pop();
 
     // Local music.
     app.stack.truncate(1);

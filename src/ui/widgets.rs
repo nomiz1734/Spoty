@@ -104,24 +104,44 @@ impl ListState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Key {
     Char(char),
+    /// Switches between Vietnamese (Telex) and English typing.
+    Lang,
     Space,
     Delete,
     Search,
+    /// The clear button inside the text field.
+    Clear,
 }
 
 pub const KEY_ROWS: [&str; 4] = ["1234567890", "qwertyuiop", "asdfghjkl'", "zxcvbnm-.&"];
 /// Bottom row: (key, width in columns).
-pub const BOTTOM_ROW: [(Key, usize); 3] = [(Key::Space, 4), (Key::Delete, 3), (Key::Search, 3)];
+pub const BOTTOM_ROW: [(Key, usize); 4] =
+    [(Key::Lang, 2), (Key::Space, 3), (Key::Delete, 2), (Key::Search, 3)];
 pub const KEY_COLS: usize = 10;
+const MAX_CHARS: usize = 60;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Keyboard {
     pub text: String,
     pub row: usize,
     pub col: usize,
+    /// Telex input ("tinhf" -> "tình") instead of plain letters.
+    pub vi: bool,
+    /// Focus is on the clear button in the text field (above the keys).
+    pub on_clear: bool,
+}
+
+impl Default for Keyboard {
+    fn default() -> Self {
+        Self::new(true)
+    }
 }
 
 impl Keyboard {
+    pub fn new(vi: bool) -> Self {
+        Self { text: String::new(), row: 0, col: 0, vi, on_clear: false }
+    }
+
     pub fn key_at(row: usize, col: usize) -> Key {
         if row < KEY_ROWS.len() {
             Key::Char(KEY_ROWS[row].chars().nth(col).unwrap_or(' '))
@@ -138,7 +158,11 @@ impl Keyboard {
     }
 
     pub fn current(&self) -> Key {
-        Self::key_at(self.row, self.col)
+        if self.on_clear {
+            Key::Clear
+        } else {
+            Self::key_at(self.row, self.col)
+        }
     }
 
     /// Column span (start, width) of the key under the cursor.
@@ -158,15 +182,29 @@ impl Keyboard {
 
     pub fn move_by(&mut self, dx: i32, dy: i32) {
         let rows = KEY_ROWS.len() + 1;
+        if self.on_clear {
+            // The clear button sits above the first row, and below the last one
+            // when wrapping around.
+            if dy != 0 {
+                self.on_clear = false;
+                self.row = if dy > 0 { 0 } else { rows - 1 };
+            }
+            return;
+        }
         if dy != 0 {
-            self.row = (self.row as i32 + dy).rem_euclid(rows as i32) as usize;
+            let next = self.row as i32 + dy;
+            if !self.text.is_empty() && (next < 0 || next >= rows as i32) {
+                self.on_clear = true;
+                return;
+            }
+            self.row = next.rem_euclid(rows as i32) as usize;
         }
         if dx != 0 {
             let (start, span) = Self::span_of(self.row, self.col);
             let next = if dx > 0 {
                 start + span
             } else {
-                start as i32 as usize + KEY_COLS - 1
+                start + KEY_COLS - 1
             };
             self.col = next % KEY_COLS;
             // Land on the first column of multi-column keys when moving left.
@@ -177,22 +215,51 @@ impl Keyboard {
         }
     }
 
+    /// Types one letter, through Telex in Vietnamese mode.
+    pub fn type_char(&mut self, c: char) {
+        let next = if self.vi && c.is_ascii_alphabetic() {
+            super::telex::apply(&self.text, c)
+        } else {
+            let mut t = self.text.clone();
+            t.push(c);
+            t
+        };
+        if next.chars().count() <= MAX_CHARS {
+            self.text = next;
+        }
+    }
+
+    pub fn space(&mut self) {
+        if !self.text.ends_with(' ') && !self.text.is_empty() {
+            self.text.push(' ');
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.text.clear();
+        if self.on_clear {
+            self.on_clear = false;
+            self.row = 0;
+        }
+    }
+
+    /// Removes the last character; the clear button goes away with the text.
+    pub fn backspace(&mut self) {
+        self.text.pop();
+        if self.text.is_empty() && self.on_clear {
+            self.on_clear = false;
+            self.row = 0;
+        }
+    }
+
     /// Applies the key under the cursor; returns true if the user asked to search.
     pub fn press(&mut self) -> bool {
         match self.current() {
-            Key::Char(c) => {
-                if self.text.chars().count() < 60 {
-                    self.text.push(c);
-                }
-            }
-            Key::Space => {
-                if !self.text.ends_with(' ') && !self.text.is_empty() {
-                    self.text.push(' ');
-                }
-            }
-            Key::Delete => {
-                self.text.pop();
-            }
+            Key::Char(c) => self.type_char(c),
+            Key::Lang => self.vi = !self.vi,
+            Key::Space => self.space(),
+            Key::Delete => self.backspace(),
+            Key::Clear => self.clear(),
             Key::Search => return !self.text.trim().is_empty(),
         }
         false

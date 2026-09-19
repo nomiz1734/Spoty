@@ -98,6 +98,8 @@ pub struct Config {
     pub autoplay: bool,
     /// Time zone sent to Spotify for the home feed (e.g. "Asia/Ho_Chi_Minh"; "" = system).
     pub time_zone: String,
+    /// Search keyboard layout at start: "vi" (Telex) or "en" (plain letters).
+    pub search_keyboard: String,
 }
 
 impl Default for Config {
@@ -125,6 +127,7 @@ impl Default for Config {
             auto_update_check: true,
             autoplay: true,
             time_zone: String::new(),
+            search_keyboard: "vi".into(),
         }
     }
 }

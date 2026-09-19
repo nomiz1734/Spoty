@@ -1,5 +1,2 @@
-• Trang "Dành cho bạn": đề xuất hôm nay, Daily Mix, nghe gần đây… như app Spotify
-• Tự phát bài tương tự khi hết playlist/album (Spotify và nhạc trên máy)
-• Nhạc trên máy: album không còn bị tách khi có nghệ sĩ góp giọng; nghệ sĩ góp giọng có trang riêng
-• Joystick trái dùng như D-pad, nhấn joystick để phát/dừng
-• Sửa icon bị đè lên tên app ở màn hình Apps
+• Tìm kiếm gõ được tiếng Việt kiểu Telex (tinhf = tình, dduwowngf = đường); nút VI | EN (hoặc L1) để chuyển sang gõ tiếng Anh
+• Nút xóa hết chữ trong ô tìm kiếm: bấm lên từ hàng phím số rồi A (hoặc SELECT), sau đó B để thoát

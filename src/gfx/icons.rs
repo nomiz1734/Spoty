@@ -24,6 +24,8 @@ pub enum Icon {
     Disc,
     Refresh,
     Check,
+    /// A cross, for "clear".
+    Close,
     /// D-pad left/right, for button hints.
     PadLR,
     /// D-pad up/down, for button hints.
@@ -118,6 +120,10 @@ fn shapes(icon: Icon) -> Vec<Shape> {
         Icon::Check => vec![
             Line(4.5, 12.5, 9.5, 17.5, 1.5),
             Line(9.5, 17.5, 19.5, 6.5, 1.5),
+        ],
+        Icon::Close => vec![
+            Line(6.0, 6.0, 18.0, 18.0, 1.6),
+            Line(18.0, 6.0, 6.0, 18.0, 1.6),
         ],
         Icon::PadLR => vec![
             Tri([(2.0, 12.0), (9.5, 6.0), (9.5, 18.0)], 0.5),

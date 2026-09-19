@@ -724,18 +724,35 @@ fn draw_search(x: &mut Ctx, app: &mut App, kb: &mut Keyboard) {
     x.ic.draw(x.c, Icon::Search, fx + 18, fy + 16, 32, BG);
     let tx = fx + 64;
     if kb.text.is_empty() {
-        x.f.draw(x.c, tx, fy + 14, "Bài hát, nghệ sĩ hoặc album…", 26.0, Weight::Regular, DIM);
+        let hint = if kb.vi {
+            "Bài hát, nghệ sĩ hoặc album… (gõ Telex)"
+        } else {
+            "Bài hát, nghệ sĩ hoặc album…"
+        };
+        x.f.draw(x.c, tx, fy + 14, hint, 26.0, Weight::Regular, DIM);
     } else {
+        let max_w = (fw - 64 - 84) as f32;
         let shown = {
             // Keep the end of long queries visible.
             let mut s = kb.text.clone();
-            while x.f.measure(&s, 26.0, Weight::Regular) > (fw - 100) as f32 && !s.is_empty() {
+            while x.f.measure(&s, 26.0, Weight::Regular) > max_w && !s.is_empty() {
                 s.remove(0);
             }
             s
         };
         let tw = x.f.draw(x.c, tx, fy + 14, &shown, 26.0, Weight::Regular, BG) as i32;
-        x.c.fill_rect(tx + tw + 3, fy + 16, 3, 32, ACCENT);
+        if !kb.on_clear {
+            x.c.fill_rect(tx + tw + 3, fy + 16, 3, 32, ACCENT);
+        }
+        // Clear button: reached with ▲ from the top row of keys, or SELECT.
+        let (cx, cy) = ((fx + fw - 38) as f32, (fy + fh / 2) as f32);
+        if kb.on_clear {
+            x.c.fill_rounded(fx + fw - 64, fy + 6, 52, 52, 26, ACCENT);
+            x.ic.draw(x.c, Icon::Close, cx as i32 - 14, cy as i32 - 14, 28, BG);
+        } else {
+            x.c.fill_circle(cx, cy, 17.0, DIM);
+            x.ic.draw(x.c, Icon::Close, cx as i32 - 11, cy as i32 - 11, 22, TEXT);
+        }
     }
 
     // Keyboard.
@@ -746,11 +763,12 @@ fn draw_search(x: &mut Ctx, app: &mut App, kb: &mut Keyboard) {
     let x0 = (w - total_w) / 2;
     let y0 = fy + fh + 28;
     let (sel_start, sel_span) = Keyboard::span_of(kb.row, kb.col);
+    let on_keys = !kb.on_clear;
     for (r, row) in KEY_ROWS.iter().enumerate() {
         for (cidx, ch) in row.chars().enumerate() {
             let kx = x0 + cidx as i32 * (key_w + gap);
             let ky = y0 + r as i32 * (key_h + gap);
-            let selected = kb.row == r && sel_start == cidx;
+            let selected = on_keys && kb.row == r && sel_start == cidx;
             let (bg, fg) = if selected { (ACCENT, BG) } else { (ELEVATED, TEXT) };
             x.c.fill_rounded(kx, ky, key_w, key_h, 10, bg);
             let s = ch.to_uppercase().to_string();
@@ -763,32 +781,64 @@ fn draw_search(x: &mut Ctx, app: &mut App, kb: &mut Keyboard) {
     for (key, span) in BOTTOM_ROW {
         let kx = x0 + col as i32 * (key_w + gap);
         let kw = span as i32 * key_w + (span as i32 - 1) * gap;
-        let selected = kb.row == r && sel_start == col && sel_span == span;
+        let selected = on_keys && kb.row == r && sel_start == col && sel_span == span;
         let (bg, fg) = match (selected, key) {
             (true, _) => (ACCENT, BG),
             (false, Key::Search) => (HIGHLIGHT, ACCENT),
             _ => (ELEVATED, TEXT),
         };
         x.c.fill_rounded(kx, ky, kw, key_h, 10, bg);
-        let label = match key {
-            Key::Space => "Dấu cách",
-            Key::Delete => "Xóa",
-            Key::Search => "Tìm",
-            Key::Char(_) => "",
-        };
-        if key == Key::Search {
-            let lw = x.f.measure(label, 24.0, Weight::Bold) as i32;
-            let start = kx + (kw - lw - 36) / 2;
-            x.ic.draw(x.c, Icon::Search, start, ky + 21, 28, fg);
-            x.f.draw(x.c, start + 36, ky + 19, label, 24.0, Weight::Bold, fg);
-        } else {
-            x.f.draw_centered(x.c, kx + kw / 2, ky + 19, label, 24.0, Weight::Bold, fg);
+        match key {
+            Key::Search => {
+                let label = "Tìm";
+                let lw = x.f.measure(label, 24.0, Weight::Bold) as i32;
+                let start = kx + (kw - lw - 36) / 2;
+                x.ic.draw(x.c, Icon::Search, start, ky + 21, 28, fg);
+                x.f.draw(x.c, start + 36, ky + 19, label, 24.0, Weight::Bold, fg);
+            }
+            Key::Lang => {
+                // Both layouts, the active one lit: "VI  EN".
+                let off = lerp_color(bg, fg, 0.4);
+                let half = kw / 2;
+                let (vi, en) = if kb.vi { (fg, off) } else { (off, fg) };
+                x.f.draw_centered(x.c, kx + half / 2 + 8, ky + 19, "VI", 24.0, Weight::Bold, vi);
+                x.f.draw_centered(x.c, kx + half + half / 2 - 8, ky + 19, "EN", 24.0, Weight::Bold, en);
+                x.c.fill_rect(kx + half - 1, ky + 22, 2, key_h - 44, off);
+            }
+            _ => {
+                let label = match key {
+                    Key::Space => "Dấu cách",
+                    Key::Delete => "Xóa",
+                    _ => "",
+                };
+                x.f.draw_centered(x.c, kx + kw / 2, ky + 19, label, 24.0, Weight::Bold, fg);
+            }
         }
         col += span;
     }
+    if kb.vi {
+        let ty = ky + key_h + 18;
+        x.f.draw_centered(
+            x.c,
+            w / 2,
+            ty,
+            "Telex:  s f r x j = dấu   ·   aa ee oo = â ê ô   ·   aw ow uw = ă ơ ư   ·   dd = đ",
+            20.0,
+            Weight::Regular,
+            DIM,
+        );
+    }
+    let a_label = if kb.on_clear { "Xóa hết" } else { "Nhập" };
     hints(
         x,
-        &[("A", "Nhập"), ("B", "Xóa"), ("X", "Cách"), ("START", "Tìm"), ("SELECT", "Xóa hết")],
+        &[
+            ("A", a_label),
+            ("B", "Xóa"),
+            ("X", "Cách"),
+            ("L1", "VI/EN"),
+            ("SELECT", "Xóa hết"),
+            ("START", "Tìm"),
+        ],
     );
 }
 

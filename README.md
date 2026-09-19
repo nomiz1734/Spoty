@@ -87,7 +87,7 @@ Spotify và nhạc trên máy **dùng chung loa**: bên này phát thì bên kia
 | B | Quay lại | Quay lại | Xóa ký tự / lên thư mục cha |
 | X | Phát ngẫu nhiên | Bật/tắt trộn bài | Dấu cách / chọn thư mục |
 | Y | Mở Đang phát | Lặp: tắt → danh sách → 1 bài | — |
-| L1 / R1 | Lên/xuống 1 trang | Tua −15s / +15s | — |
+| L1 / R1 | Lên/xuống 1 trang | Tua −15s / +15s | L1: đổi bàn phím VI / EN |
 | L2 / R2 | Về đầu / cuối danh sách | — | — |
 | SELECT | Nhảy tới bài đang phát | — | Xóa hết / hủy |
 | START | Tùy chọn (mở album/nghệ sĩ…) | Tùy chọn | Tìm / chọn thư mục |
@@ -95,6 +95,8 @@ Spotify và nhạc trên máy **dùng chung loa**: bên này phát thì bên kia
 | Nguồn | Tắt/bật màn hình, **nhạc vẫn phát** | | |
 
 Ở **Dành cho bạn**: ▲▼ đổi kệ, ◀▶ chọn thẻ (L1/R1 nhảy 4 thẻ), A mở, X phát ngẫu nhiên, SELECT làm mới.
+
+**Tìm kiếm** gõ được tiếng Việt kiểu **Telex**: `s f r x j` là dấu sắc/huyền/hỏi/ngã/nặng, `z` bỏ dấu, `aa ee oo` = â ê ô, `aw ow uw` = ă ơ ư, `dd` = đ. Dấu gõ ở cuối từ cũng được (`tinhf` → tình, `dduwowngf` → đường). Gõ lặp phím để bỏ (`ff` → f). Nút **VI | EN** ở góc trái bàn phím (hoặc **L1**) chuyển sang gõ tiếng Anh cho tên bài nước ngoài; app nhớ lựa chọn này. Nút **✕** trong ô tìm kiếm xóa hết chữ: bấm ▲ từ hàng phím số để tới nút rồi bấm A, hoặc bấm SELECT. Khi ô trống, B quay lại.
 
 ## Cập nhật OTA
 
@@ -129,6 +131,7 @@ File này được tạo ở lần chạy đầu tiên, và tự thêm các khó
 | `auto_update_check` | `true` | Tự kiểm tra bản mới khi mở app |
 | `autoplay` | `true` | Hết playlist/album thì tự phát bài tương tự (Spotify và nhạc trên máy) |
 | `time_zone` | `""` | Múi giờ cho trang Dành cho bạn (`""` = của máy, mặc định Asia/Ho_Chi_Minh) |
+| `search_keyboard` | `"vi"` | Bàn phím tìm kiếm: `vi` (Telex) hoặc `en` |
 | `device_name` | `"TrimUI Brick Pro"` | Tên hiện trong danh sách Spotify Connect |
 | `bitrate` | `320` | Chất lượng Spotify: 96 / 160 / 320 kbps |
 | `initial_volume` | `70` | Âm lượng Spotify lần đầu (%) |
