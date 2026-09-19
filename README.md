@@ -16,7 +16,7 @@ Spoty là app nghe nhạc cho **TrimUI Brick Pro** (và Brick) chạy **firmware
 
 ## Cài đặt
 
-1. Giải nén `Spoty-stock.zip` (hoặc tự build, xem bên dưới).
+1. Tải `Spoty-stock.zip` ở [Releases](https://github.com/nomiz1734/Spoty/releases/latest) rồi giải nén (hoặc tự build, xem bên dưới).
 2. Chép thư mục `Spoty` vào thẻ nhớ tại `Apps/Spoty` (tức `/mnt/SDCARD/Apps/Spoty`).
 3. Trên máy, mở mục **Apps** và chọn **Spoty**.
 
@@ -96,18 +96,15 @@ Cách cập nhật được bảo vệ:
 - `settings.json` và dữ liệu (tài khoản, thư viện, cache) được giữ nguyên.
 - Bản cũ được giữ lại thành `spoty.old`. Nếu bản mới lỗi ngay khi khởi động, `launch.sh` tự khôi phục bản cũ.
 
-**Phát hành bản mới** (dùng GitHub Releases, miễn phí):
+**Phát hành bản mới.** Repo: <https://github.com/nomiz1734/Spoty>. App đọc `update.json` của release mới nhất, địa chỉ lưu trong `update-url.txt`:
 
-1. Tạo một repo GitHub cho Spoty (có thể để private repo code, nhưng release phải công khai để máy tải được).
-2. Tăng `version` trong `Cargo.toml`, ghi thay đổi vào `release-notes.txt`.
-3. Build, đưa vào URL "bản mới nhất" của repo:
-   ```powershell
-   .\build.ps1 -UpdateUrl "https://github.com/<bạn>/<repo>/releases/latest/download/update.json"
-   ```
-   Hoặc lưu URL này vào file `update-url.txt` ở thư mục gốc, để các lần build sau không cần gõ lại.
-4. Tạo release mới trên GitHub, tải lên **hai file** `dist\update\update.json` và `dist\update\spoty-update.tar.gz`.
+1. Tăng `version` trong `Cargo.toml` (ví dụ `0.2.1`), ghi thay đổi vào `release-notes.txt`.
+2. Commit và `git push`.
+3. Chạy `.\build.ps1 -Publish`. Lệnh này build, tạo release `v<version>` trên GitHub và tải lên `update.json`, `spoty-update.tar.gz`, `Spoty-stock.zip`. Việc đăng nhập GitHub dùng tài khoản Git đã lưu sẵn, không cần token riêng.
 
-Lần đầu vẫn phải chép bản có URL này vào máy bằng tay. Từ đó mọi bản sau đều cập nhật qua OTA. Có thể đổi nguồn cập nhật bằng khóa `update_url` trong `settings.json`.
+Các máy đang chạy Spoty sẽ tự thấy bản mới ở lần mở app tiếp theo. Có thể đổi nguồn cập nhật bằng khóa `update_url` trong `settings.json`.
+
+Tải bản mới nhất để cài lần đầu: [Releases](https://github.com/nomiz1734/Spoty/releases/latest).
 
 ## Cấu hình: `Apps/Spoty/settings.json`
 

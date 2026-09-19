@@ -6,11 +6,13 @@
 #                                     https://github.com/<you>/<repo>/releases/latest/download/update.json
 #   .\build.ps1 -Notes "..."       -> release notes shown on the device before updating
 #   .\build.ps1 -Screenshots       -> also renders every screen to dist\screenshots
+#   .\build.ps1 -Publish           -> also creates the GitHub release (tools\publish_release.py)
 #
 # Needs: rustup (x86_64-pc-windows-gnu host) with target aarch64-unknown-linux-gnu,
 #        and `pip install ziglang cargo-zigbuild`.
 param(
     [switch]$Screenshots,
+    [switch]$Publish,
     [string]$UpdateUrl = "",
     [string]$Notes = ""
 )
@@ -76,4 +78,9 @@ if ($Screenshots) {
     cargo zigbuild --release --target x86_64-pc-windows-gnu
     if ($LASTEXITCODE -ne 0) { throw "Windows build failed" }
     & (Join-Path $root "target\x86_64-pc-windows-gnu\release\spoty.exe") --screenshots (Join-Path $distRoot "screenshots")
+}
+
+if ($Publish) {
+    python (Join-Path $root "tools\publish_release.py")
+    if ($LASTEXITCODE -ne 0) { throw "publishing the release failed" }
 }
