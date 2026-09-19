@@ -1,0 +1,4 @@
+• Nghe nhạc trên máy: FLAC, ALAC, WAV, AIFF, MP3, AAC, Vorbis, Opus
+• Âm thanh bit-perfect, gapless, Hi-Res 24-bit
+• Cập nhật OTA ngay trên máy
+• Logo mới

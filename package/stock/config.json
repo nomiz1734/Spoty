@@ -1,0 +1,7 @@
+{
+  "label": "Spoty",
+  "icon": "icon.png",
+  "icontop": "icon.png",
+  "launch": "launch.sh",
+  "description": "Spotify client"
+}

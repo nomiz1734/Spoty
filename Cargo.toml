@@ -1,0 +1,56 @@
+[package]
+name = "spoty"
+version = "0.2.0"
+edition = "2021"
+description = "Spotify client for TrimUI Brick / Brick Pro (stock OS)"
+license = "MIT"
+
+[features]
+default = []
+# Run the UI in a desktop window (minifb) with rodio audio, for development on a PC.
+desktop = ["dep:minifb", "dep:rodio", "librespot-playback/rodio-backend"]
+
+[dependencies]
+librespot-core = { version = "0.8", default-features = false, features = ["rustls-tls-webpki-roots"] }
+librespot-connect = { version = "0.8", default-features = false }
+librespot-playback = { version = "0.8", default-features = false }
+librespot-discovery = { version = "0.8", default-features = false, features = ["with-libmdns"] }
+librespot-metadata = { version = "0.8", default-features = false }
+librespot-protocol = "0.8"
+protobuf = "3"
+protobuf-json-mapping = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs"] }
+futures-util = "0.3"
+fontdue = "0.9"
+jpeg-decoder = { version = "0.3", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+unicode-normalization = "0.1"
+log = { version = "0.4", features = ["std"] }
+libc = "0.2"
+sha1 = "0.10"
+minifb = { version = "0.28", optional = true }
+rodio = { version = "0.21", optional = true, default-features = false, features = ["playback"] }
+# Local music: decoding (lossless + lossy), resampling, cover art.
+symphonia = { version = "0.5", default-features = false, features = ["aac", "adpcm", "aiff", "alac", "flac", "isomp4", "mkv", "mp3", "ogg", "pcm", "vorbis", "wav"] }
+opus-decoder = "0.1"
+rubato = "0.16"
+png = "0.18"
+# OTA updates.
+sha2 = "0.10"
+flate2 = "1"
+tar = "0.4"
+hyper = "1"
+http-body-util = "0.1"
+bytes = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+panic = "abort"
+strip = true
+
+# Pure-Rust Opus decoder with its slow reference DFT replaced by rustfft.
+[patch.crates-io]
+opus-decoder = { path = "vendor/opus-decoder" }
