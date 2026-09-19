@@ -68,8 +68,13 @@ def main() -> None:
     mark = extract_mark(Image.open(SRC))
     brand = ROOT / "assets" / "brand"
     mark.save(brand / "logo-mark.png")
-    # Launcher icon for the stock OS.
-    tile(mark, 300, 0.74, 0.22).save(ROOT / "package" / "stock" / "icon.png", optimize=True)
+    # Launcher icon for the stock OS: the launcher draws the app name over the
+    # lower part of the 300x300 cell, so the tile sits in the middle with a
+    # transparent margin (like the built-in apps).
+    icon = Image.new("RGBA", (300, 300), (0, 0, 0, 0))
+    t = tile(mark, 184, 0.74, 0.22)
+    icon.alpha_composite(t, ((300 - 184) // 2, (300 - 184) // 2))
+    icon.save(ROOT / "package" / "stock" / "icon.png", optimize=True)
     # Tiles embedded in the app (login/splash and small headers).
     tile(mark, 168, 0.74, 0.22).save(brand / "tile-168.png", optimize=True)
     tile(mark, 64, 0.76, 0.22).save(brand / "tile-64.png", optimize=True)

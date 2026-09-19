@@ -45,6 +45,9 @@ impl Paths {
     pub fn fonts_dir(&self) -> PathBuf {
         self.app_dir.join("assets").join("fonts")
     }
+    pub fn home_feed_file(&self) -> PathBuf {
+        self.data_dir.join("home_feed.json")
+    }
     pub fn local_library_file(&self) -> PathBuf {
         self.data_dir.join("local_library.json")
     }
@@ -91,6 +94,10 @@ pub struct Config {
     pub update_url: String,
     /// Check for updates automatically at start.
     pub auto_update_check: bool,
+    /// When a playlist/album ends, keep playing similar songs (Spotify and local music).
+    pub autoplay: bool,
+    /// Time zone sent to Spotify for the home feed (e.g. "Asia/Ho_Chi_Minh"; "" = system).
+    pub time_zone: String,
 }
 
 impl Default for Config {
@@ -116,6 +123,8 @@ impl Default for Config {
             // Baked in at build time with SPOTY_UPDATE_URL (see build.ps1 -UpdateUrl).
             update_url: option_env!("SPOTY_UPDATE_URL").unwrap_or("").into(),
             auto_update_check: true,
+            autoplay: true,
+            time_zone: String::new(),
         }
     }
 }

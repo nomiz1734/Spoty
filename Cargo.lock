@@ -3020,7 +3020,7 @@ dependencies = [
 
 [[package]]
 name = "spoty"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytes",
  "flate2",
@@ -3028,6 +3028,8 @@ dependencies = [
  "futures-util",
  "http-body-util",
  "hyper",
+ "hyper-rustls 0.27.9",
+ "hyper-util",
  "jpeg-decoder",
  "libc",
  "librespot-connect",

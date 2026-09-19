@@ -49,6 +49,7 @@ fn map_key(k: Key) -> Option<Button> {
         Key::RightShift => Button::Select,
         Key::Escape => Button::Menu,
         Key::P => Button::Power,
+        Key::C => Button::L3,
         Key::Equal | Key::NumPadPlus => Button::VolUp,
         Key::Minus | Key::NumPadMinus => Button::VolDown,
         _ => return None,

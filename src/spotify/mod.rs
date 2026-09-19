@@ -2,6 +2,7 @@
 //! browsing through Spotify's internal endpoints. Runs on the tokio runtime and
 //! talks to the UI thread through channels.
 
+pub mod home;
 pub mod images;
 pub mod library;
 pub mod types;
@@ -150,6 +151,8 @@ async fn run(
     let device_id = device_id(&cfg.device_name);
     let session_config = SessionConfig {
         device_id: device_id.clone(),
+        // Like the Spotify apps: when a playlist or album ends, continue with similar songs.
+        autoplay: Some(cfg.autoplay),
         ..Default::default()
     };
     let audio_dir = (cfg.audio_cache_mb > 0).then(|| paths.audio_cache_dir());
@@ -425,6 +428,21 @@ async fn run(
                             sh.emit(Event::Playlists(r));
                         });
                     }
+                    Cmd::LoadHome => {
+                        if !connected {
+                            shared.emit(Event::Home(Err("Chưa kết nối Spotify".into())));
+                            continue;
+                        }
+                        let (s, sh) = (session.clone(), shared.clone());
+                        let (file, tz) = (paths.home_feed_file(), cfg.time_zone.clone());
+                        tokio::spawn(async move {
+                            let r = home::load(&s, &file, &tz).await;
+                            if let Err(e) = &r {
+                                log::warn!("home feed: {e}");
+                            }
+                            sh.emit(Event::Home(r));
+                        });
+                    }
                     Cmd::LoadSource { req, source } => {
                         if !connected {
                             shared.emit(Event::Tracks { req, result: Err("Chưa kết nối Spotify".into()) });
@@ -697,4 +715,38 @@ fn request_meta(shared: &Arc<Shared>, session: &Session, uris: Vec<String>) {
             Err(e) => log::warn!("metadata: {e}"),
         }
     });
+}
+
+/// `spoty --home-test`: checks the home feed end to end with the saved account.
+pub async fn home_selftest(cfg: Config, paths: Paths) {
+    match home::discover_hash().await {
+        Ok(h) => println!("web player home hash: {h}"),
+        Err(e) => println!("hash lookup failed: {e}"),
+    }
+    let cache = Cache::new(Some(paths.credentials_dir()), None::<PathBuf>, None, None).ok();
+    let Some(creds) = cache.as_ref().and_then(|c| c.credentials()) else {
+        println!("no saved Spotify account in {}", paths.credentials_dir().display());
+        return;
+    };
+    let session = Session::new(
+        SessionConfig {
+            device_id: device_id(&cfg.device_name),
+            ..Default::default()
+        },
+        cache,
+    );
+    if let Err(e) = session.connect(creds, false).await {
+        println!("login failed: {e}");
+        return;
+    }
+    println!("logged in as {}", session.username());
+    match home::load(&session, &paths.home_feed_file(), &cfg.time_zone).await {
+        Ok(sections) => {
+            for s in &sections {
+                let names: Vec<&str> = s.items.iter().take(4).map(|i| i.title.as_str()).collect();
+                println!("[{}] {} items: {}", s.title, s.items.len(), names.join(" | "));
+            }
+        }
+        Err(e) => println!("home failed: {e}"),
+    }
 }

@@ -34,6 +34,8 @@ pub enum LocalEvent {
     State { playing: bool, position_ms: u32 },
     Position(u32),
     Shuffle(bool),
+    /// The queue played to the end (not stopped by the user).
+    QueueEnded,
     Error(String),
     ScanProgress { done: usize, total: usize },
     Library(Result<Arc<Library>, String>),
@@ -80,17 +82,41 @@ pub fn track_info(t: &LocalTrack) -> TrackInfo {
     }
 }
 
-fn artist_key(t: &LocalTrack) -> String {
-    let a = if t.album_artist.is_empty() {
+/// Splits a credit like "RPT MCK, Trung Trần" or "Lil Wuyn/ 16 BrT" into artists.
+/// "&" is left alone because many band names contain it.
+pub fn split_artists(s: &str) -> Vec<String> {
+    let mut parts: Vec<String> = vec![s.to_string()];
+    for sep in [",", "/", ";", " feat. ", " feat ", " ft. ", " ft ", " Feat. ", " Ft. ", " x ", " X "] {
+        parts = parts
+            .iter()
+            .flat_map(|p| p.split(sep).map(str::to_string).collect::<Vec<_>>())
+            .collect();
+    }
+    let mut out: Vec<String> = Vec::new();
+    for p in parts {
+        let p = p.trim().to_string();
+        if !p.is_empty() && !out.iter().any(|o| o.to_lowercase() == p.to_lowercase()) {
+            out.push(p);
+        }
+    }
+    out
+}
+
+/// The album artist if tagged, else the first credited artist.
+pub fn primary_artist(t: &LocalTrack) -> String {
+    let credit = if t.album_artist.trim().is_empty() {
         &t.artist
     } else {
         &t.album_artist
     };
-    if a.is_empty() {
-        UNKNOWN_ARTIST.to_lowercase()
-    } else {
-        a.to_lowercase()
-    }
+    split_artists(credit)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| UNKNOWN_ARTIST.to_string())
+}
+
+fn artist_key(t: &LocalTrack) -> String {
+    primary_artist(t).to_lowercase()
 }
 
 /// An album, artist or folder: a titled list of tracks.
@@ -127,7 +153,20 @@ impl Index {
         let mut by_artist: HashMap<String, Vec<usize>> = HashMap::new();
         for (i, tr) in t.iter().enumerate() {
             by_album.entry(tr.album_key()).or_default().push(i);
-            by_artist.entry(artist_key(tr)).or_default().push(i);
+            // A track shows up under every artist it credits, like on Spotify.
+            let mut credits = split_artists(&tr.artist);
+            credits.extend(split_artists(&tr.album_artist));
+            if credits.is_empty() {
+                credits.push(UNKNOWN_ARTIST.to_string());
+            }
+            let mut seen: Vec<String> = Vec::new();
+            for a in credits {
+                let k = a.to_lowercase();
+                if !seen.contains(&k) {
+                    by_artist.entry(k.clone()).or_default().push(i);
+                    seen.push(k);
+                }
+            }
         }
         let album_order = |v: &mut Vec<usize>| {
             v.sort_by_cached_key(|&i| {
@@ -144,16 +183,7 @@ impl Index {
             .map(|(key, mut v)| {
                 album_order(&mut v);
                 let first = &t[v[0]];
-                let who = if first.album_artist.is_empty() {
-                    first.artist.clone()
-                } else {
-                    first.album_artist.clone()
-                };
-                let who = if who.is_empty() {
-                    UNKNOWN_ARTIST.to_string()
-                } else {
-                    who
-                };
+                let who = primary_artist(first);
                 Group {
                     key,
                     title: first.album.clone(),
@@ -170,13 +200,12 @@ impl Index {
             .map(|(key, mut v)| {
                 album_order(&mut v);
                 let first = &t[v[0]];
-                let name = if !first.album_artist.is_empty() {
-                    first.album_artist.clone()
-                } else if !first.artist.is_empty() {
-                    first.artist.clone()
-                } else {
-                    UNKNOWN_ARTIST.to_string()
-                };
+                // Display name in its original spelling, as credited on the first track.
+                let name = split_artists(&first.artist)
+                    .into_iter()
+                    .chain(split_artists(&first.album_artist))
+                    .find(|a| a.to_lowercase() == key)
+                    .unwrap_or_else(|| UNKNOWN_ARTIST.to_string());
                 let n_albums = {
                     let mut a: Vec<&str> = v.iter().map(|&i| t[i].album.as_str()).collect();
                     a.sort();
@@ -428,4 +457,63 @@ pub fn play_selftest(files: &[String], cfg: &crate::config::Config) {
     }
     let _ = player.send(LocalCmd::Shutdown);
     std::thread::sleep(Duration::from_millis(200));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn track(album: &str, artist: &str) -> LocalTrack {
+        LocalTrack {
+            path: format!("/m/{album}/{artist}.flac"),
+            dir: String::new(),
+            title: artist.into(),
+            artist: artist.into(),
+            album: album.into(),
+            album_artist: String::new(),
+            track: 0,
+            disc: 0,
+            duration_ms: 0,
+            codec: "FLAC".into(),
+            lossless: true,
+            rate: 44_100,
+            bits: 16,
+            channels: 2,
+            kbps: 0,
+            size: 0,
+            mtime: 0,
+        }
+    }
+
+    #[test]
+    fn splits_credits() {
+        assert_eq!(split_artists("RPT MCK, Trung Trần"), vec!["RPT MCK", "Trung Trần"]);
+        assert_eq!(split_artists("Lil Wuyn/ 16 BrT"), vec!["Lil Wuyn", "16 BrT"]);
+        assert_eq!(split_artists("Simon & Garfunkel"), vec!["Simon & Garfunkel"]);
+        assert_eq!(split_artists("A feat. B"), vec!["A", "B"]);
+    }
+
+    #[test]
+    fn featured_artists_do_not_split_albums() {
+        let lib = Library {
+            root: "/m".into(),
+            tracks: vec![
+                track("99%", "RPT MCK"),
+                track("99%", "RPT MCK, Trung Trần"),
+                track("99%", "RPT MCK, tlinh"),
+                track("An", "Lil Wuyn/ 16 BrT"),
+                track("An", "Lil Wuyn/ VSoul"),
+                track("Lặng", "Shiki"),
+                track("Lặng", "Shiki/ Obito"),
+                track("Lặng", "SHiKi, tyronee"),
+            ],
+        };
+        let ix = Index::new(Arc::new(lib));
+        let albums: Vec<(String, usize)> = ix.albums.iter().map(|g| (g.title.clone(), g.tracks.len())).collect();
+        assert_eq!(albums, vec![("99%".into(), 3), ("An".into(), 2), ("Lặng".into(), 3)]);
+        let artist = |name: &str| ix.artists.iter().find(|g| g.title == name).map(|g| g.tracks.len());
+        assert_eq!(artist("RPT MCK"), Some(3));
+        assert_eq!(artist("Trung Trần"), Some(1));
+        assert_eq!(artist("tlinh"), Some(1));
+    }
 }

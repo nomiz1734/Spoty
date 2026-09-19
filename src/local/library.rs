@@ -58,13 +58,14 @@ impl LocalTrack {
         format!("file:{}", self.path)
     }
 
+    /// Album identity: title + main artist, so featured artists on some
+    /// tracks ("RPT MCK, tlinh") don't split an album into pieces.
     pub fn album_key(&self) -> String {
-        let who = if self.album_artist.is_empty() {
-            &self.artist
-        } else {
-            &self.album_artist
-        };
-        format!("{}\u{1}{}", who.to_lowercase(), self.album.to_lowercase())
+        format!(
+            "{}\u{1}{}",
+            super::primary_artist(self).to_lowercase(),
+            self.album.trim().to_lowercase()
+        )
     }
 
     /// "FLAC • 24-bit / 96 kHz", "MP3 • 320 kbps".

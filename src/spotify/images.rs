@@ -6,7 +6,7 @@ use std::sync::Arc;
 use librespot_core::Session;
 use sha1::{Digest, Sha1};
 
-use crate::gfx::image::decode_cover;
+use crate::gfx::image::decode_image;
 use crate::gfx::Image;
 
 const CACHE_LIMIT_BYTES: u64 = 150 * 1024 * 1024;
@@ -34,7 +34,7 @@ pub async fn load(session: Session, cache_dir: PathBuf, url: String, size: u32) 
         }
     };
     let decoded =
-        tokio::task::spawn_blocking(move || decode_cover(&bytes, size as usize)).await;
+        tokio::task::spawn_blocking(move || decode_image(&bytes, size as usize)).await;
     match decoded {
         Ok(Ok(img)) => Some(Arc::new(img)),
         Ok(Err(e)) => {

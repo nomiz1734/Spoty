@@ -2,17 +2,17 @@
 
 Spoty là app nghe nhạc cho **TrimUI Brick Pro** (và Brick) chạy **firmware gốc (Stock OS)**:
 
-- **Spotify**: duyệt thư viện, tìm kiếm và phát ngay trên máy. Máy cũng là một loa Spotify Connect, điều khiển được từ điện thoại.
+- **Spotify**: trang **Dành cho bạn** (đề xuất hôm nay, Daily Mix, nghe gần đây…), duyệt thư viện, tìm kiếm và phát ngay trên máy. Hết playlist thì **tự phát tiếp bài tương tự** như app Spotify. Máy cũng là một loa Spotify Connect, điều khiển được từ điện thoại.
 - **Nhạc trên máy**: phát file bạn đã tải về, cả **lossless** (FLAC, ALAC, WAV, AIFF) lẫn **lossy** (MP3, AAC, Vorbis, Opus). Chất lượng được giữ tốt nhất có thể, bit-perfect khi phần cứng cho phép.
 - **Cập nhật OTA**: app tự báo khi có bản mới và cập nhật ngay trên máy.
 
-| Thư viện | Nhạc trên máy | Đang phát (Hi-Res) |
+| Dành cho bạn | Thư viện | Đang phát (Hi-Res) |
 |---|---|---|
-| ![](docs/02_home.png) | ![](docs/07_local_home.png) | ![](docs/10_local_now_playing.png) |
+| ![](docs/02b_feed.png) | ![](docs/02_home.png) | ![](docs/10_local_now_playing.png) |
 
-| Album trên máy | Chọn thư mục nhạc | Cập nhật OTA |
+| Nhạc trên máy | Album trên máy | Cập nhật OTA |
 |---|---|---|
-| ![](docs/08_local_albums.png) | ![](docs/11_folder_picker.png) | ![](docs/12_update_available.png) |
+| ![](docs/07_local_home.png) | ![](docs/08_local_albums.png) | ![](docs/12_update_available.png) |
 
 ## Cài đặt
 
@@ -34,6 +34,10 @@ Cần tài khoản **Spotify Premium**. librespot, và mọi thiết bị Spotif
 
 Spoty ghi nhớ tài khoản ở `data/account/`. Muốn đổi tài khoản thì chọn **MENU → Đăng xuất Spotify**.
 
+**Dành cho bạn** là trang chủ giống app Spotify: các kệ "Được đề xuất cho hôm nay", "Gần đây", mix hằng ngày, playlist theo nhạc bạn nghe… Đây là đúng nội dung cá nhân hóa mà app Spotify hiển thị. App mở trang này khi kết nối xong. Trang cũng nằm ở dòng đầu của Thư viện, và bấm SELECT để làm mới. Lần mở sau, trang hiện ngay từ bản lưu trước rồi mới cập nhật.
+
+**Tự phát bài tương tự (autoplay):** khi playlist hoặc album phát hết, Spotify tự nối tiếp các bài đề xuất, giống app chính thức. Tắt bằng `"autoplay": false`.
+
 ## Nhạc trên máy
 
 1. Mở **Thư viện → Nhạc trên máy**. Khi chưa đăng nhập Spotify, bấm **X** ngay ở màn hình đăng nhập.
@@ -43,6 +47,8 @@ Spoty ghi nhớ tài khoản ở `data/account/`. Muốn đổi tài khoản th�
    - thư mục ẩn,
    - thư mục hệ thống như `Android`, `Notifications`, `Ringtones`.
 4. Duyệt nhạc theo **Tất cả bài hát**, **Album**, **Nghệ sĩ** hoặc **Thư mục**. Bấm **X** để phát ngẫu nhiên.
+
+Album được gom theo **nghệ sĩ chính**, nên các bài có nghệ sĩ góp giọng ("RPT MCK, tlinh", "Lil Wuyn/ VSoul") vẫn nằm trong cùng một album. Mục **Nghệ sĩ** liệt kê bài hát dưới mọi nghệ sĩ tham gia. Khi hàng đợi phát hết, app **tự phát tiếp** các bài khác của cùng nghệ sĩ, rồi đến bài ngẫu nhiên trong thư viện (cùng tùy chọn `autoplay`).
 
 Lần quét sau chỉ đọc lại những file mới hoặc đã thay đổi (dựa vào kích thước và thời gian sửa), nên rất nhanh. Chọn **Quét lại thư viện** sau khi chép thêm nhạc.
 
@@ -75,7 +81,8 @@ Spotify và nhạc trên máy **dùng chung loa**: bên này phát thì bên kia
 
 | Nút | Danh sách | Đang phát | Tìm kiếm / Chọn thư mục |
 |---|---|---|---|
-| D-pad | Di chuyển (giữ để cuộn nhanh) | ◀▶ bài trước/sau, ▲▼ âm lượng | Di chuyển |
+| D-pad / joystick trái | Di chuyển (giữ để cuộn nhanh) | ◀▶ bài trước/sau, ▲▼ âm lượng | Di chuyển |
+| Nhấn joystick (L3) | Phát / Dừng (ở mọi màn hình) | Phát / Dừng | Phát / Dừng |
 | A | Mở / phát bài | Phát / Dừng | Gõ phím / vào thư mục |
 | B | Quay lại | Quay lại | Xóa ký tự / lên thư mục cha |
 | X | Phát ngẫu nhiên | Bật/tắt trộn bài | Dấu cách / chọn thư mục |
@@ -86,6 +93,8 @@ Spotify và nhạc trên máy **dùng chung loa**: bên này phát thì bên kia
 | START | Tùy chọn (mở album/nghệ sĩ…) | Tùy chọn | Tìm / chọn thư mục |
 | MENU | Menu: nhạc trên máy, cập nhật, tắt màn hình, đăng xuất, **thoát** | | |
 | Nguồn | Tắt/bật màn hình, **nhạc vẫn phát** | | |
+
+Ở **Dành cho bạn**: ▲▼ đổi kệ, ◀▶ chọn thẻ (L1/R1 nhảy 4 thẻ), A mở, X phát ngẫu nhiên, SELECT làm mới.
 
 ## Cập nhật OTA
 
@@ -118,6 +127,8 @@ File này được tạo ở lần chạy đầu tiên, và tự thêm các khó
 | `local_volume` | `100` | Âm lượng nhạc trên máy (%). 100 = bit-perfect |
 | `update_url` | *(lúc build)* | URL `update.json` cho OTA (`""` = tắt) |
 | `auto_update_check` | `true` | Tự kiểm tra bản mới khi mở app |
+| `autoplay` | `true` | Hết playlist/album thì tự phát bài tương tự (Spotify và nhạc trên máy) |
+| `time_zone` | `""` | Múi giờ cho trang Dành cho bạn (`""` = của máy, mặc định Asia/Ho_Chi_Minh) |
 | `device_name` | `"TrimUI Brick Pro"` | Tên hiện trong danh sách Spotify Connect |
 | `bitrate` | `320` | Chất lượng Spotify: 96 / 160 / 320 kbps |
 | `initial_volume` | `70` | Âm lượng Spotify lần đầu (%) |
@@ -140,6 +151,7 @@ File này được tạo ở lần chạy đầu tiên, và tự thêm các khó
   - `SPOTY_TEST_VOLUME=30 ./spoty --play-test a.flac b.mp3`: phát thật qua loa và in từng sự kiện.
   - `./spoty --scan-test /mnt/SDCARD/Music`: quét thư mục như app.
   - `./spoty --update-check <url>`: thử đọc `update.json`.
+  - `./spoty --home-test`: tải trang Dành cho bạn bằng tài khoản đã lưu và in các kệ.
 - **Không thấy máy trong danh sách thiết bị trên điện thoại:** kiểm tra hai máy cùng Wi-Fi. Router có thể đang chặn mDNS giữa các thiết bị (chế độ "AP isolation" hoặc mạng khách).
 - **Nút bấm bị lệch:** chạy với `SPOTY_LOG=debug` để thấy mã phím chưa được gán, rồi thêm vào `keymap`.
 - **Không có tiếng / tiếng rè:** thử `"audio_output_format": "s16"`, `"audio_device": "hw:0,0"`, hoặc tăng `audio_latency_ms`.

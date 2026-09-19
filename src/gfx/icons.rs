@@ -20,6 +20,7 @@ pub enum Icon {
     Speaker,
     Person,
     Folder,
+    Home,
     Disc,
     Refresh,
     Check,
@@ -104,6 +105,10 @@ fn shapes(icon: Icon) -> Vec<Shape> {
         Icon::Folder => vec![
             Box(2.5, 6.5, 21.5, 19.5, 2.0),
             Box(2.5, 4.0, 10.5, 9.0, 1.5),
+        ],
+        Icon::Home => vec![
+            Tri([(2.5, 11.5), (12.0, 3.0), (21.5, 11.5)], 0.6),
+            Box(5.0, 10.0, 19.0, 21.0, 1.5),
         ],
         Icon::Disc => vec![Ring(12.0, 12.0, 8.3, 1.3), Circle(12.0, 12.0, 2.6)],
         Icon::Refresh => vec![

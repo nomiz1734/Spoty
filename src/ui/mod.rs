@@ -18,9 +18,10 @@ use crate::gfx::image::{accent_color, decode_png};
 use crate::gfx::{Canvas, Color, Fonts, Icon, IconCache, Image, RgbaImage};
 use crate::local::{self, LocalCmd, LocalEvent};
 use crate::platform::{self, Battery, Button, Screen};
+use crate::spotify::home::{FeedItem, FeedKind, FeedSection};
 use crate::spotify::{Cmd, ConnState, Event, PlaylistInfo, Repeat, Source, TrackInfo, TrackList};
 use crate::update::{self, UpdateInfo, UpdateState};
-use widgets::{Keyboard, ListState};
+use widgets::{FeedState, Keyboard, ListState};
 
 #[cfg_attr(not(any(target_os = "linux", feature = "desktop")), allow(dead_code))]
 pub enum UiMsg {
@@ -99,6 +100,8 @@ impl ImageStore {
 
 pub enum View {
     Home(ListState),
+    /// Spotify's personalised home ("Dành cho bạn").
+    Feed(FeedState),
     Tracks(TracksView),
     NowPlaying,
     Search(Keyboard),
@@ -303,6 +306,11 @@ pub struct App {
     pub bg_to: Color,
     pub bg_t0: Instant,
     pub local: LocalState,
+    /// Local tracks of the last queue started, for autoplay.
+    local_queue: Vec<usize>,
+    pub feed: Option<Result<Vec<FeedSection>, String>>,
+    pub feed_loading: bool,
+    feed_auto_opened: bool,
     pub update: UpdateUi,
     pub logos: Logos,
     quit: bool,
@@ -357,6 +365,13 @@ impl App {
             bg_to: theme::ELEVATED,
             bg_t0: Instant::now(),
             local: LocalState::default(),
+            local_queue: Vec::new(),
+            feed: {
+                let cached = crate::spotify::home::cached(&paths.home_feed_file());
+                (!cached.is_empty()).then_some(Ok(cached))
+            },
+            feed_loading: false,
+            feed_auto_opened: false,
             update: UpdateUi::default(),
             logos: Logos {
                 big: decode_png(include_bytes!("../../assets/brand/tile-168.png")).ok(),
@@ -561,6 +576,7 @@ impl App {
             return;
         }
         let queue: Vec<local::LocalTrack> = tracks.iter().map(|&i| ix.lib.tracks[i].clone()).collect();
+        self.local_queue = tracks.to_vec();
         self.switch_owner(Owner::Local);
         self.pb.active = true;
         self.pb.volume = percent_to_u16(self.cfg.local_volume);
@@ -743,7 +759,7 @@ impl App {
     // ------------------------------------------------------------ Spotify screens
 
     fn home_len(&self) -> usize {
-        3 + match &self.playlists {
+        4 + match &self.playlists {
             Some(Ok(p)) => p.len(),
             _ => 1, // loading / error row
         }
@@ -915,6 +931,13 @@ impl App {
                     self.send(Cmd::LoadPlaylists);
                 }
                 if now_connected {
+                    self.feed_loading = true;
+                    self.send(Cmd::LoadHome);
+                    // Like the Spotify app, start on the home feed (once per run).
+                    if !self.feed_auto_opened && self.stack.len() == 1 && self.menu.is_none() {
+                        self.stack.push(View::Feed(FeedState::new()));
+                    }
+                    self.feed_auto_opened = true;
                     // Retry anything that failed while offline.
                     self.meta_requested.clear();
                     let retry: Vec<(u64, Source)> = self
@@ -1023,6 +1046,15 @@ impl App {
                     self.meta.insert(t.uri.clone(), t);
                 }
             }
+            Event::Home(r) => {
+                self.feed_loading = false;
+                match r {
+                    Ok(sections) => self.feed = Some(Ok(sections)),
+                    // Keep showing the cached feed if a refresh fails.
+                    Err(e) if !matches!(self.feed, Some(Ok(_))) => self.feed = Some(Err(e)),
+                    Err(_) => {}
+                }
+            }
             Event::Image { url, size, image } => self.images.insert(url, size, image),
             Event::Toast(msg) => self.toast(msg),
             Event::Update(state) => {
@@ -1072,6 +1104,11 @@ impl App {
                 p.pos_at = Instant::now();
             }
             LocalEvent::Shuffle(s) => self.pb_for(Owner::Local).shuffle = s,
+            LocalEvent::QueueEnded => {
+                if self.cfg.autoplay && self.owner == Owner::Local {
+                    self.local_autoplay();
+                }
+            }
             LocalEvent::Error(e) => self.toast(e),
             LocalEvent::ScanProgress { done, total } => self.local.scanning = Some((done, total)),
             LocalEvent::Library(r) => {
@@ -1097,7 +1134,7 @@ impl App {
             b,
             Button::Up | Button::Down | Button::L1 | Button::R1 | Button::VolUp | Button::VolDown
         ) || (matches!(b, Button::Left | Button::Right)
-            && matches!(self.stack.last(), Some(View::Search(_))))
+            && matches!(self.stack.last(), Some(View::Search(_) | View::Feed(_))))
     }
 
     fn handle_button(&mut self, b: Button, repeat: bool, screen: &mut dyn Screen) {
@@ -1137,6 +1174,12 @@ impl App {
         }
         if self.menu.is_some() {
             return self.handle_menu_button(b, repeat, screen);
+        }
+        if matches!(b, Button::L3 | Button::R3) {
+            if !repeat {
+                self.global_toggle();
+            }
+            return;
         }
         if self.on_login_screen() {
             match b {
@@ -1301,6 +1344,39 @@ impl App {
                 Button::Y if !repeat => self.open_now_playing(),
                 _ => {}
             },
+            View::Feed(fs) => {
+                let lens: Vec<usize> = match &self.feed {
+                    Some(Ok(s)) => s.iter().map(|x| x.items.len()).collect(),
+                    _ => Vec::new(),
+                };
+                match b {
+                    Button::Up => fs.move_row(-1, &lens),
+                    Button::Down => fs.move_row(1, &lens),
+                    Button::Left => fs.move_col(-1, &lens),
+                    Button::Right => fs.move_col(1, &lens),
+                    Button::L1 => fs.move_col(-4, &lens),
+                    Button::R1 => fs.move_col(4, &lens),
+                    Button::A | Button::X if !repeat => {
+                        let (row, col) = (fs.row, fs.cols.get(fs.row).copied().unwrap_or(0));
+                        let pick = self.feed_item(row, col);
+                        match pick {
+                            Some(item) if b == Button::A => self.open_feed_item(&item),
+                            Some(item) => self.shuffle_uri(item.uri.clone()),
+                            None if self.feed.as_ref().map(|f| f.is_err()).unwrap_or(true) => {
+                                self.refresh_feed()
+                            }
+                            None => {}
+                        }
+                    }
+                    Button::Select if !repeat => self.refresh_feed(),
+                    Button::Y if !repeat => self.open_now_playing(),
+                    Button::B if !repeat => {
+                        self.stack.pop();
+                    }
+                    Button::Start if !repeat => self.open_menu(),
+                    _ => {}
+                }
+            }
             View::Local(state) => {
                 let len = 6;
                 match b {
@@ -1447,6 +1523,113 @@ impl App {
         }
     }
 
+    // ------------------------------------------------------------ home feed
+
+    fn open_feed(&mut self) {
+        if !matches!(self.stack.last(), Some(View::Feed(_))) {
+            self.stack.push(View::Feed(FeedState::new()));
+        }
+        if !self.feed_loading && !matches!(self.feed, Some(Ok(_))) {
+            self.refresh_feed();
+        }
+    }
+
+    fn refresh_feed(&mut self) {
+        if self.username().is_none() {
+            self.toast("Cần kết nối Spotify để tải đề xuất");
+            return;
+        }
+        self.feed_loading = true;
+        if matches!(self.feed, Some(Err(_))) {
+            self.feed = None;
+        }
+        self.send(Cmd::LoadHome);
+        self.toast("Đang làm mới đề xuất…");
+    }
+
+    fn feed_item(&self, row: usize, col: usize) -> Option<FeedItem> {
+        match &self.feed {
+            Some(Ok(s)) => s.get(row).and_then(|sec| sec.items.get(col)).cloned(),
+            _ => None,
+        }
+    }
+
+    fn open_feed_item(&mut self, item: &FeedItem) {
+        let (uri, name) = (item.uri.clone(), item.title.clone());
+        let source = match item.kind {
+            FeedKind::Playlist => Source::Playlist { uri, name },
+            FeedKind::Album => Source::Album { uri, name },
+            FeedKind::Artist => Source::Artist { uri, name },
+        };
+        self.open_source(source, item.image.clone());
+    }
+
+    fn shuffle_uri(&mut self, context_uri: String) {
+        if self.username().is_none() {
+            return;
+        }
+        self.switch_owner(Owner::Spotify);
+        self.send(Cmd::PlayContext {
+            context_uri,
+            index: None,
+            shuffle: Some(true),
+        });
+        self.toast("Phát ngẫu nhiên");
+    }
+
+    /// Play/pause from any screen (joystick press).
+    fn global_toggle(&mut self) {
+        if self.pb.track.is_none() {
+            self.toast("Chưa có bài nào đang phát");
+            return;
+        }
+        let was_playing = self.pb.playing;
+        self.cmd_toggle();
+        if !matches!(self.stack.last(), Some(View::NowPlaying)) {
+            self.toast(if was_playing { "Tạm dừng" } else { "Tiếp tục phát" });
+        }
+    }
+
+    /// When a local queue ends: more by the same artist, then the rest of the
+    /// library in random order.
+    fn local_autoplay(&mut self) {
+        let Some(ix) = self.local_index() else { return };
+        let played: HashSet<usize> = self.local_queue.iter().copied().collect();
+        let current = self.pb_for(Owner::Local).track.as_ref().map(|t| t.uri.clone());
+        let seed = current
+            .and_then(|u| self.local.by_uri.get(&u).copied())
+            .or_else(|| self.local_queue.last().copied());
+        let Some(seed) = seed else { return };
+        let artist = local::primary_artist(&ix.lib.tracks[seed]).to_lowercase();
+        let mut rng = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(1)
+            | 1;
+        let mut shuffle = |v: &mut Vec<usize>| {
+            for i in (1..v.len()).rev() {
+                rng ^= rng << 13;
+                rng ^= rng >> 7;
+                rng ^= rng << 17;
+                v.swap(i, (rng % (i as u64 + 1)) as usize);
+            }
+        };
+        let fresh: Vec<usize> = (0..ix.lib.tracks.len()).filter(|i| !played.contains(i)).collect();
+        let (mut same, mut others): (Vec<usize>, Vec<usize>) = fresh
+            .into_iter()
+            .partition(|&i| local::primary_artist(&ix.lib.tracks[i]).to_lowercase() == artist);
+        shuffle(&mut same);
+        shuffle(&mut others);
+        same.truncate(10);
+        let mut queue = same;
+        queue.extend(others.into_iter().take(25usize.saturating_sub(queue.len())));
+        if queue.is_empty() {
+            return;
+        }
+        self.play_local(&queue, 0, false);
+        self.toast("Tự động phát bài tương tự");
+    }
+
     fn handle_menu_button(&mut self, b: Button, repeat: bool, screen: &mut dyn Screen) {
         let Some(menu) = self.menu.as_mut() else {
             return;
@@ -1504,12 +1687,13 @@ impl App {
 
     fn activate_home_row(&mut self, sel: usize) {
         match sel {
-            0 => self.open_source(Source::Liked, None),
-            1 => self.stack.push(View::Search(Keyboard::default())),
-            2 => self.open_local_home(),
+            0 => self.open_feed(),
+            1 => self.open_source(Source::Liked, None),
+            2 => self.stack.push(View::Search(Keyboard::default())),
+            3 => self.open_local_home(),
             n => match &self.playlists {
                 Some(Ok(list)) => {
-                    if let Some(p) = list.get(n - 3) {
+                    if let Some(p) = list.get(n - 4) {
                         let (uri, name, cover) = (p.uri.clone(), p.name.clone(), p.cover.clone());
                         self.open_source(Source::Playlist { uri, name }, cover);
                     }
@@ -1524,7 +1708,7 @@ impl App {
     }
 
     fn shuffle_home_row(&mut self, sel: usize) {
-        if sel == 2 {
+        if sel == 3 {
             if let Some(ix) = self.local_index() {
                 self.play_local(&ix.all, 0, true);
             }
@@ -1534,10 +1718,10 @@ impl App {
             return;
         };
         let uri = match sel {
-            0 => Some(Source::Liked.context_uri(&user)),
-            1 => None,
+            1 => Some(Source::Liked.context_uri(&user)),
+            0 | 2 => None,
             n => match &self.playlists {
-                Some(Ok(list)) => list.get(n - 3).map(|p| p.uri.clone()),
+                Some(Ok(list)) => list.get(n - 4).map(|p| p.uri.clone()),
                 _ => None,
             },
         };
@@ -1587,6 +1771,7 @@ impl App {
                 View::Tracks(tv) => moving |= tv.state.animate(dt),
                 View::Entries(ev) => moving |= ev.state.animate(dt),
                 View::Picker(pv) => moving |= pv.state.animate(dt),
+                View::Feed(fs) => moving |= fs.animate(dt),
                 _ => {}
             }
         }

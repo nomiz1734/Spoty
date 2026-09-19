@@ -15,6 +15,8 @@ use super::Button;
 
 const EV_KEY: u16 = 0x01;
 const EV_ABS: u16 = 0x03;
+const ABS_X: u16 = 0x00;
+const ABS_Y: u16 = 0x01;
 const ABS_Z: u16 = 0x02;
 const ABS_RZ: u16 = 0x05;
 const ABS_HAT0X: u16 = 0x10;
@@ -63,6 +65,9 @@ fn default_keymap() -> HashMap<u16, Button> {
         (545, Down),
         (546, Left),
         (547, Right),
+        // Stick presses (BTN_THUMBL / BTN_THUMBR).
+        (317, L3),
+        (318, R3),
     ])
 }
 
@@ -73,6 +78,9 @@ struct Device {
     trigger_max: HashMap<u16, i32>,
     hat: [i32; 2],
     triggers: HashMap<u16, bool>,
+    /// Left stick ranges (min, max) for ABS_X / ABS_Y, and its current direction.
+    stick_range: [Option<(i32, i32)>; 2],
+    stick: [i32; 2],
 }
 
 fn has_key(fd: i32, code: u16) -> bool {
@@ -81,10 +89,14 @@ fn has_key(fd: i32, code: u16) -> bool {
     r >= 0 && (bits[code as usize / 8] >> (code % 8)) & 1 == 1
 }
 
-fn abs_max(fd: i32, abs: u16) -> Option<i32> {
+fn abs_range(fd: i32, abs: u16) -> Option<(i32, i32)> {
     let mut info = [0i32; 6]; // value, min, max, fuzz, flat, resolution
     let r = unsafe { libc::ioctl(fd, eviocgabs(abs) as _, info.as_mut_ptr()) };
-    (r >= 0 && info[2] > info[1]).then_some(info[2])
+    (r >= 0 && info[2] > info[1]).then_some((info[1], info[2]))
+}
+
+fn abs_max(fd: i32, abs: u16) -> Option<i32> {
+    abs_range(fd, abs).map(|r| r.1)
 }
 
 fn open_devices(cfg: &Config) -> Vec<Device> {
@@ -114,7 +126,8 @@ fn open_devices(cfg: &Config) -> Vec<Device> {
                 trigger_max.insert(abs, max);
             }
         }
-        log::info!("input: {path} \"{name}\" grabbed={grabbed}");
+        let stick_range = [abs_range(fd, ABS_X), abs_range(fd, ABS_Y)];
+        log::info!("input: {path} \"{name}\" grabbed={grabbed} stick={stick_range:?}");
         devices.push(Device {
             file,
             name,
@@ -122,6 +135,8 @@ fn open_devices(cfg: &Config) -> Vec<Device> {
             trigger_max,
             hat: [0, 0],
             triggers: HashMap::new(),
+            stick_range,
+            stick: [0, 0],
         });
     }
     devices
@@ -204,6 +219,41 @@ fn run(cfg: Config, keymap: HashMap<u16, Button>, tx: Sender<UiMsg>) {
                             continue;
                         }
                         dev.hat[axis] = new;
+                        let (neg, pos) = if axis == 0 {
+                            (Button::Left, Button::Right)
+                        } else {
+                            (Button::Up, Button::Down)
+                        };
+                        if old < 0 {
+                            send(neg, false);
+                        } else if old > 0 {
+                            send(pos, false);
+                        }
+                        if new < 0 {
+                            send(neg, true);
+                        } else if new > 0 {
+                            send(pos, true);
+                        }
+                    }
+                    EV_ABS if code == ABS_X || code == ABS_Y => {
+                        // Left stick works like the D-pad, with hysteresis so it doesn't chatter.
+                        let axis = (code - ABS_X) as usize;
+                        let Some((min, max)) = dev.stick_range[axis] else { continue };
+                        let center = (min + max) as f32 / 2.0;
+                        let half = ((max - min) as f32 / 2.0).max(1.0);
+                        let norm = (value as f32 - center) / half;
+                        let old = dev.stick[axis];
+                        let new = if norm.abs() > 0.55 {
+                            norm.signum() as i32
+                        } else if norm.abs() < 0.35 {
+                            0
+                        } else {
+                            old
+                        };
+                        if new == old {
+                            continue;
+                        }
+                        dev.stick[axis] = new;
                         let (neg, pos) = if axis == 0 {
                             (Button::Left, Button::Right)
                         } else {

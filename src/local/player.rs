@@ -541,6 +541,7 @@ impl Player {
                 playing: false,
                 position_ms: 0,
             });
+            self.emit(LocalEvent::QueueEnded);
             return;
         };
         if !self.open_decoder(next) {

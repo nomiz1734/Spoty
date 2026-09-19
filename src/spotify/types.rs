@@ -115,6 +115,8 @@ pub enum ConnState {
 #[derive(Debug)]
 pub enum Cmd {
     LoadPlaylists,
+    /// Spotify's personalised home feed.
+    LoadHome,
     LoadSource { req: u64, source: Source },
     NeedMeta(Vec<String>),
     Image { url: String, size: u32 },
@@ -150,6 +152,7 @@ pub enum Event {
     Shuffle(bool),
     Repeat(Repeat),
     Playlists(Result<Vec<PlaylistInfo>, String>),
+    Home(Result<Vec<super::home::FeedSection>, String>),
     Tracks { req: u64, result: Result<TrackList, String> },
     Meta(Vec<TrackInfo>),
     Image { url: String, size: u32, image: Option<Arc<Image>> },

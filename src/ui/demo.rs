@@ -10,9 +10,10 @@ use crate::gfx::{self, lerp_color, rgb, Canvas, Fonts, IconCache, Image};
 use crate::local::{Library, LocalTrack};
 use crate::platform::Battery;
 use crate::spotify::{Cmd, ConnState, PlaylistInfo, Repeat, Source, TrackInfo, TrackList};
+use crate::spotify::home::{FeedItem, FeedKind, FeedSection};
 use crate::update::{UpdateInfo, UpdateState};
 
-use super::widgets::{Keyboard, ListState};
+use super::widgets::{FeedState, Keyboard, ListState};
 use super::{draw, App, Menu, Owner, PickerView, TracksView, View};
 
 fn fake_cover(url: &str, size: u32) -> Image {
@@ -33,6 +34,10 @@ fn fake_cover(url: &str, size: u32) -> Image {
 
 fn settle(app: &mut App) {
     for v in app.stack.iter_mut() {
+        if let View::Feed(fs) = v {
+            fs.settle();
+            continue;
+        }
         let s = match v {
             View::Home(s) | View::Local(s) => s,
             View::Tracks(tv) => &mut tv.state,
@@ -200,6 +205,46 @@ pub fn screenshots(mut fonts: Fonts, dir: &Path) {
     home.sel = 2;
     app.stack = vec![View::Home(home)];
     render(&mut c, &mut fonts, &mut ic, &mut app, dir, "02_home");
+
+    let card = |uri: &str, kind: FeedKind, title: &str, sub: &str| FeedItem {
+        uri: uri.into(),
+        kind,
+        title: title.into(),
+        subtitle: sub.into(),
+        image: Some(format!("demo:{uri}")),
+    };
+    app.feed = Some(Ok(vec![
+        FeedSection {
+            title: "Được đề xuất cho hôm nay".into(),
+            items: vec![
+                card("spotify:album:a1", FeedKind::Album, "Buông", "Album • Hngle"),
+                card("spotify:album:a2", FeedKind::Album, "Và Thế Giới Đã Mất Đi Một Người Cô Đơn", "Album • marzuz, Changg"),
+                card("spotify:album:a3", FeedKind::Album, "NỔ", "Album • Wren Evans"),
+                card("spotify:playlist:p1", FeedKind::Playlist, "Hip-hop Việt", "HIEUTHUHAI, Low G, B Ray"),
+                card("spotify:playlist:p2", FeedKind::Playlist, "V-Pop Không Thể Thiếu", "Dangrangto, Hngle, Low G"),
+            ],
+        },
+        FeedSection {
+            title: "Gần đây".into(),
+            items: vec![
+                card("spotify:playlist:d3", FeedKind::Playlist, "Daily Mix 3", "Danh sách phát • Spotify"),
+                card("spotify:artist:n1", FeedKind::Artist, "Nhuộm Collective", "Nghệ sĩ"),
+                card("spotify:album:t1", FeedKind::Album, "trái tim băng bó", "Album • Dangrangto"),
+                card("spotify:playlist:rc", FeedKind::Playlist, "RapCaviar", "Drake, Travis Scott"),
+            ],
+        },
+        FeedSection {
+            title: "Dựa trên nhạc bạn nghe gần đây".into(),
+            items: vec![card("spotify:playlist:x1", FeedKind::Playlist, "Today's Top Hits", "Ariana Grande, Olivia Rodrigo")],
+        },
+    ]));
+    app.stack.push(View::Feed(FeedState::new()));
+    if let Some(View::Feed(fs)) = app.stack.last_mut() {
+        fs.row = 0;
+        fs.cols = vec![1, 0, 0];
+    }
+    render(&mut c, &mut fonts, &mut ic, &mut app, dir, "02b_feed");
+    app.stack.pop();
 
     let mut state = ListState::new();
     state.sel = 3;

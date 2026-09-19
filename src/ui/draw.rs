@@ -33,6 +33,7 @@ pub fn frame(c: &mut Canvas, f: &mut Fonts, ic: &mut IconCache, app: &mut App) {
             View::Tracks(tv) => draw_tracks(&mut x, app, tv),
             View::Search(kb) => draw_search(&mut x, app, kb),
             View::Local(state) => draw_local_home(&mut x, app, state),
+            View::Feed(fs) => draw_feed(&mut x, app, fs),
             View::Entries(ev) => draw_entries(&mut x, app, ev),
             View::Picker(pv) => draw_picker(&mut x, app, pv),
             View::NowPlaying => {}
@@ -339,14 +340,25 @@ fn draw_home(x: &mut Ctx, app: &mut App, state: &mut ListState) {
         let max = w - text_x - SIDE_PAD - 10;
         let (title_s, sub, title_col): (String, String, Color) = match i {
             0 => {
+                icon_tile(x, Icon::Home, tx, ty, HOME_THUMB as i32, rgb(0x1a, 0x4d, 0x33), ACCENT);
+                let sub = match &app.feed {
+                    Some(Ok(s)) => {
+                        let names: Vec<&str> = s.iter().take(3).map(|x| x.title.as_str()).collect();
+                        names.join(" • ")
+                    }
+                    _ => "Đề xuất, mix hằng ngày, nghe gần đây".into(),
+                };
+                ("Dành cho bạn".into(), sub, TEXT)
+            }
+            1 => {
                 liked_tile(x, tx, ty, HOME_THUMB as i32);
                 ("Bài hát đã thích".into(), "Playlist • Tự động".into(), TEXT)
             }
-            1 => {
+            2 => {
                 icon_tile(x, Icon::Search, tx, ty, HOME_THUMB as i32, ELEVATED, TEXT);
                 ("Tìm kiếm".into(), "Tìm bài hát, nghệ sĩ trên Spotify".into(), TEXT)
             }
-            2 => {
+            3 => {
                 icon_tile(x, Icon::Folder, tx, ty, HOME_THUMB as i32, rgb(0x1f, 0x3b, 0x5c), TEXT);
                 let sub = match (&app.local.index, app.local.scanning) {
                     (_, Some((d, t))) if t > 0 => format!("Đang quét… {d}/{t}"),
@@ -362,7 +374,7 @@ fn draw_home(x: &mut Ctx, app: &mut App, state: &mut ListState) {
             }
             n => match &playlists {
                 Some(Ok(list)) => {
-                    let p = &list[n - 3];
+                    let p = &list[n - 4];
                     cover(x, app, p.cover.as_deref(), tx, ty, HOME_THUMB, 6);
                     let owner = match app.username() {
                         Some(u) if u == p.owner => "của bạn".to_string(),
@@ -1167,4 +1179,94 @@ fn draw_update(x: &mut Ctx, app: &mut App) {
         bx += update_button(x, bx, by, "A", p, true);
     }
     update_button(x, bx, by, "B", secondary, false);
+}
+
+// ---------------------------------------------------------------- home feed
+
+const SHELF_H: i32 = 300;
+const CARD: i32 = 180;
+const CARD_STRIDE: i32 = 202;
+
+fn draw_feed(x: &mut Ctx, app: &mut App, fs: &mut super::widgets::FeedState) {
+    use crate::spotify::home::FeedKind;
+    let area = content_rect(x, app);
+    let w = x.c.w as i32;
+    let feed = app.feed.take();
+    match &feed {
+        Some(Ok(sections)) if !sections.is_empty() => {
+            let lens: Vec<usize> = sections.iter().map(|s| s.items.len()).collect();
+            fs.set_geometry(
+                SHELF_H as f32,
+                CARD_STRIDE as f32,
+                (w - 2 * SIDE_PAD) as f32,
+                area.h as f32,
+                &lens,
+            );
+            x.c.set_clip(area);
+            for (i, sec) in sections.iter().enumerate() {
+                let sy = area.y + i as i32 * SHELF_H - fs.y.round() as i32;
+                if sy > area.y + area.h || sy + SHELF_H < area.y {
+                    continue;
+                }
+                x.f.draw_fit(x.c, SIDE_PAD, sy + 8, w - 2 * SIDE_PAD, &sec.title, 25.0, Weight::Bold, TEXT);
+                let ox = fs.xs.get(i).copied().unwrap_or(0.0).round() as i32;
+                let cy = sy + 52;
+                for (j, item) in sec.items.iter().enumerate() {
+                    let cx = SIDE_PAD + j as i32 * CARD_STRIDE - ox;
+                    if cx > w || cx + CARD < 0 {
+                        continue;
+                    }
+                    let round = item.kind == FeedKind::Artist;
+                    let selected = i == fs.row && fs.cols.get(i).copied() == Some(j);
+                    if selected {
+                        if round {
+                            let c = (cx + CARD / 2) as f32;
+                            x.c.fill_circle(c, (cy + CARD / 2) as f32, (CARD / 2 + 5) as f32, TEXT);
+                        } else {
+                            x.c.fill_rounded(cx - 5, cy - 5, CARD + 10, CARD + 10, 14, TEXT);
+                        }
+                    }
+                    let radius = if round { CARD / 2 } else { 8 };
+                    cover(x, app, item.image.as_deref(), cx, cy, CARD as u32, radius);
+                    let col = if selected { TEXT } else { rgb(0xE0, 0xE0, 0xE0) };
+                    x.f.draw_fit(x.c, cx, cy + CARD + 10, CARD, &item.title, 19.0, Weight::Bold, col);
+                    x.f.draw_fit(x.c, cx, cy + CARD + 37, CARD, &item.subtitle, 16.0, Weight::Regular, SUBTEXT);
+                }
+            }
+            x.c.reset_clip();
+        }
+        Some(Err(e)) => {
+            let cy = area.y + area.h / 2 - 60;
+            x.f.draw_centered(x.c, w / 2, cy, "Không tải được đề xuất từ Spotify", 25.0, Weight::Bold, ERROR);
+            let lines = x.f.wrap(e, 18.0, Weight::Regular, (w - 160) as f32, 2);
+            for (k, l) in lines.iter().enumerate() {
+                x.f.draw_centered(x.c, w / 2, cy + 44 + k as i32 * 26, l, 18.0, Weight::Regular, SUBTEXT);
+            }
+            x.f.draw_centered(x.c, w / 2, cy + 110, "Nhấn A để thử lại", 20.0, Weight::Regular, TEXT);
+        }
+        _ => {
+            let cy = area.y + area.h / 2;
+            spinner(x, app, (w / 2) as f32, (cy - 30) as f32, 24.0, SUBTEXT);
+            let msg = if app.username().is_some() {
+                "Đang tải đề xuất từ Spotify…"
+            } else {
+                "Đang kết nối Spotify…"
+            };
+            x.f.draw_centered(x.c, w / 2, cy + 14, msg, 20.0, Weight::Regular, SUBTEXT);
+        }
+    }
+    app.feed = feed;
+    top_bar(x, app, "Dành cho bạn", true);
+    if app.feed_loading && matches!(app.feed, Some(Ok(_))) {
+        // Small spinner next to the title while refreshing.
+        let tw = x.f.measure("Dành cho bạn", 28.0, Weight::Bold) as i32;
+        spinner(x, app, (SIDE_PAD + tw + 24) as f32, 30.0, 9.0, SUBTEXT);
+    }
+    if show_mini(app) {
+        mini_player(x, app);
+    }
+    hints(
+        x,
+        &[("A", "Mở"), ("X", "Phát ngẫu nhiên"), ("Y", "Đang phát"), ("SELECT", "Làm mới"), ("B", "Thư viện")],
+    );
 }

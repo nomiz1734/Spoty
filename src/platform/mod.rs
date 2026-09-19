@@ -35,6 +35,9 @@ pub enum Button {
     Power,
     VolUp,
     VolDown,
+    /// Left / right stick press.
+    L3,
+    R3,
 }
 
 #[cfg_attr(not(all(target_os = "linux", not(feature = "desktop"))), allow(dead_code))]
@@ -60,6 +63,8 @@ impl Button {
             "POWER" => Power,
             "VOLUP" | "VOL+" => VolUp,
             "VOLDOWN" | "VOL-" => VolDown,
+            "L3" => L3,
+            "R3" => R3,
             _ => return None,
         })
     }

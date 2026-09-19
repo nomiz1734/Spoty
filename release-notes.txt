@@ -1,4 +1,5 @@
-• Nghe nhạc trên máy: FLAC, ALAC, WAV, AIFF, MP3, AAC, Vorbis, Opus
-• Âm thanh bit-perfect, gapless, Hi-Res 24-bit
-• Cập nhật OTA ngay trên máy
-• Logo mới
+• Trang "Dành cho bạn": đề xuất hôm nay, Daily Mix, nghe gần đây… như app Spotify
+• Tự phát bài tương tự khi hết playlist/album (Spotify và nhạc trên máy)
+• Nhạc trên máy: album không còn bị tách khi có nghệ sĩ góp giọng; nghệ sĩ góp giọng có trang riêng
+• Joystick trái dùng như D-pad, nhấn joystick để phát/dừng
+• Sửa icon bị đè lên tên app ở màn hình Apps

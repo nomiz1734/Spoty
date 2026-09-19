@@ -41,6 +41,12 @@ fn main() {
         local::play_selftest(&args[i + 1..], &cfg);
         return;
     }
+    if args.iter().any(|a| a == "--home-test") {
+        let cfg = config::Config::load(&paths);
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+        rt.block_on(spotify::home_selftest(cfg, paths));
+        return;
+    }
     if let Some(i) = args.iter().position(|a| a == "--update-check") {
         // Fetches a manifest the way the app does (HTTPS + redirects) and reports.
         let url = args.get(i + 1).cloned().unwrap_or_default();

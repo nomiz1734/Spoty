@@ -198,3 +198,108 @@ impl Keyboard {
         false
     }
 }
+
+/// Rows of horizontally scrolling cards (the home feed), with animated scrolling
+/// on both axes.
+#[derive(Clone, Debug, Default)]
+pub struct FeedState {
+    pub row: usize,
+    pub cols: Vec<usize>,
+    pub y: f32,
+    ty: f32,
+    pub xs: Vec<f32>,
+    txs: Vec<f32>,
+    shelf_h: f32,
+    stride: f32,
+    view_w: f32,
+    view_h: f32,
+}
+
+impl FeedState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn sync(&mut self, lens: &[usize]) {
+        let n = lens.len();
+        self.cols.resize(n, 0);
+        self.xs.resize(n, 0.0);
+        self.txs.resize(n, 0.0);
+        for (c, &l) in self.cols.iter_mut().zip(lens) {
+            *c = (*c).min(l.saturating_sub(1));
+        }
+        self.row = self.row.min(n.saturating_sub(1));
+    }
+
+    pub fn set_geometry(&mut self, shelf_h: f32, stride: f32, view_w: f32, view_h: f32, lens: &[usize]) {
+        let first = self.shelf_h == 0.0;
+        self.shelf_h = shelf_h;
+        self.stride = stride;
+        self.view_w = view_w;
+        self.view_h = view_h;
+        self.sync(lens);
+        self.retarget(lens);
+        if first {
+            self.y = self.ty;
+            self.xs.clone_from(&self.txs);
+        }
+    }
+
+    pub fn move_row(&mut self, delta: i32, lens: &[usize]) {
+        if lens.is_empty() {
+            return;
+        }
+        self.row = (self.row as i32 + delta).clamp(0, lens.len() as i32 - 1) as usize;
+        self.retarget(lens);
+    }
+
+    pub fn move_col(&mut self, delta: i32, lens: &[usize]) {
+        let Some(&len) = lens.get(self.row) else { return };
+        if len == 0 {
+            return;
+        }
+        let c = &mut self.cols[self.row];
+        *c = (*c as i32 + delta).clamp(0, len as i32 - 1) as usize;
+        self.retarget(lens);
+    }
+
+    fn retarget(&mut self, lens: &[usize]) {
+        if lens.is_empty() || self.shelf_h <= 0.0 {
+            return;
+        }
+        let total = lens.len() as f32 * self.shelf_h;
+        self.ty = (self.row as f32 * self.shelf_h).min((total - self.view_h).max(0.0));
+        let len = lens[self.row];
+        let max_x = (len as f32 * self.stride - self.view_w).max(0.0);
+        // Keep one card of context to the left of the selection.
+        let col = self.cols[self.row] as f32;
+        self.txs[self.row] = ((col - 1.0).max(0.0) * self.stride).min(max_x);
+    }
+
+    pub fn animate(&mut self, dt: f32) -> bool {
+        let k = 1.0 - (-dt * 20.0).exp();
+        let mut moving = false;
+        let mut step = |v: &mut f32, t: f32| {
+            let d = t - *v;
+            if d.abs() < 0.5 {
+                *v = t;
+            } else {
+                *v += d * k;
+                moving = true;
+            }
+        };
+        let ty = self.ty;
+        step(&mut self.y, ty);
+        for i in 0..self.xs.len() {
+            let t = self.txs[i];
+            step(&mut self.xs[i], t);
+        }
+        moving
+    }
+
+    /// Jumps straight to the targets (screenshots).
+    pub fn settle(&mut self) {
+        self.y = self.ty;
+        self.xs.clone_from(&self.txs);
+    }
+}
