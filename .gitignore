@@ -4,3 +4,10 @@
 settings.json
 __pycache__/
 *.pyc
+
+# Ghi chú làm việc, không thuộc mã nguồn: kế hoạch triển khai, tóm tắt phiên,
+# hướng dẫn dựng máy chủ.
+/implementation_plan.md
+/TOM-TAT-*.md
+/PHASE*-SETUP-GUIDE.md
+/notes/

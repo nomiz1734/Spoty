@@ -1,6 +1,6 @@
 [package]
 name = "spoty"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 description = "Spotify client for TrimUI Brick / Brick Pro (stock OS)"
 license = "MIT"
@@ -40,7 +40,8 @@ png = "0.18"
 sha2 = "0.10"
 flate2 = "1"
 tar = "0.4"
-hyper = "1"
+# Client for the home feed and downloads; server for "Nhận nhạc qua WiFi".
+hyper = { version = "1", features = ["client", "server", "http1"] }
 # Home feed: our own HTTPS client (a browser user agent is needed to find the query hash).
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "ring", "webpki-tokio"] }
 hyper-util = { version = "0.1", default-features = false, features = ["client", "client-legacy", "http1", "tokio"] }

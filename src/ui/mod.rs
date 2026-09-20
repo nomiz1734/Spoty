@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::config::{Config, Paths};
+use crate::download::{DownloadCmd, DownloadEvent, SearchResult, Stage};
 use crate::gfx::image::{accent_color, decode_png};
 use crate::gfx::{Canvas, Color, Fonts, Icon, IconCache, Image, RgbaImage};
 use crate::local::{self, LocalCmd, LocalEvent};
@@ -22,6 +23,7 @@ use crate::platform::{self, Battery, Button, Screen};
 use crate::spotify::home::{FeedItem, FeedKind, FeedSection};
 use crate::spotify::{Cmd, ConnState, Event, PlaylistInfo, Repeat, Source, TrackInfo, TrackList};
 use crate::update::{self, UpdateInfo, UpdateState};
+use crate::wifi_transfer::{self, Wifi, WifiEvent};
 use widgets::{FeedState, Keyboard, ListState};
 
 #[cfg_attr(not(any(target_os = "linux", feature = "desktop")), allow(dead_code))]
@@ -29,6 +31,8 @@ pub enum UiMsg {
     Input(Button, bool),
     Backend(Event),
     Local(LocalEvent),
+    Download(DownloadEvent),
+    Wifi(WifiEvent),
 }
 
 /// How the UI loop ended.
@@ -105,11 +109,44 @@ pub enum View {
     Feed(FeedState),
     Tracks(TracksView),
     NowPlaying,
-    Search(Keyboard),
+    Search(Keyboard, SearchTarget),
+    /// Results from the slskd server, with the queue underneath.
+    Downloads(DownloadsView),
+    /// "Nhận nhạc qua WiFi": the address to open on the phone.
+    Wifi,
     /// Local music home: all songs / albums / artists / folders / settings.
     Local(ListState),
     Entries(EntriesView),
     Picker(PickerView),
+}
+
+/// What a typed query searches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SearchTarget {
+    Spotify,
+    /// The slskd server: download the file into the local library.
+    Download,
+}
+
+pub struct DownloadsView {
+    pub query: String,
+    pub state: ListState,
+}
+
+/// Everything the download screens show. It lives on `App`, not in the view,
+/// because events keep arriving while the user is somewhere else.
+#[derive(Default)]
+pub struct Downloads {
+    pub searching: bool,
+    /// Id of the newest search, so late results from an older one are dropped.
+    pub id: u64,
+    pub results: Vec<SearchResult>,
+    pub error: Option<String>,
+    /// Files waiting; the first one is being fetched.
+    pub queue: Vec<String>,
+    pub progress: Option<(String, Stage, u64, u64)>,
+    /// Files the user already picked, so rows can say so.
+    pub picked: HashSet<String>,
 }
 
 pub struct TracksView {
@@ -197,6 +234,10 @@ pub enum MenuAction {
     LocalMusic,
     PickFolder,
     Updates,
+    /// Search the slskd server and download into the local library.
+    Downloads,
+    /// Receive files from a phone over the local network.
+    WifiTransfer,
     Logout,
     Exit,
 }
@@ -317,6 +358,13 @@ pub struct App {
     quit: bool,
     restart: bool,
     cmd: UnboundedSender<Cmd>,
+    /// Music downloads from the user's own slskd server.
+    dl: UnboundedSender<DownloadCmd>,
+    pub dls: Downloads,
+    /// The WiFi upload server, while its screen is open.
+    pub wifi: Option<Wifi>,
+    /// The app's tokio runtime, for starting the WiFi server on demand.
+    rt: tokio::runtime::Handle,
     local_tx: Sender<LocalCmd>,
     ui_tx: Option<Sender<UiMsg>>,
     started: Instant,
@@ -338,7 +386,14 @@ fn default_browse_root() -> PathBuf {
 }
 
 impl App {
-    fn new(cfg: Config, paths: Paths, cmd: UnboundedSender<Cmd>, local_tx: Sender<LocalCmd>) -> Self {
+    fn new(
+        cfg: Config,
+        paths: Paths,
+        cmd: UnboundedSender<Cmd>,
+        dl: UnboundedSender<DownloadCmd>,
+        rt: tokio::runtime::Handle,
+        local_tx: Sender<LocalCmd>,
+    ) -> Self {
         let local_volume = percent_to_u16(cfg.local_volume);
         Self {
             conn: ConnState::Starting,
@@ -381,6 +436,10 @@ impl App {
             quit: false,
             restart: false,
             cmd,
+            dl,
+            dls: Downloads::default(),
+            wifi: None,
+            rt,
             local_tx,
             ui_tx: None,
             started: Instant::now(),
@@ -749,6 +808,9 @@ impl App {
     fn choose_music_dir(&mut self, path: PathBuf) {
         self.cfg.music_dir = path.to_string_lossy().to_string();
         self.cfg.save(&self.paths);
+        // Anything still downloading would land in the old folder.
+        let _ = self.dl.send(DownloadCmd::Cancel);
+        let _ = self.dl.send(DownloadCmd::MusicDir(path.clone()));
         self.local.index = None;
         self.local.scanning = None;
         self.stack.retain(|v| !matches!(v, View::Picker(_) | View::Entries(_)));
@@ -837,6 +899,10 @@ impl App {
             Some(info) => format!("Cập nhật lên phiên bản {}", info.version),
             None => "Kiểm tra cập nhật".into(),
         };
+        if !self.cfg.slskd_url.trim().is_empty() {
+            items.push(("Tải nhạc".into(), MenuAction::Downloads));
+        }
+        items.push(("Nhận nhạc qua WiFi".into(), MenuAction::WifiTransfer));
         items.push((update_label, MenuAction::Updates));
         if !self.logged_out() {
             items.push(("Đăng xuất Spotify".into(), MenuAction::Logout));
@@ -904,6 +970,8 @@ impl App {
                     self.update.state = Some(UpdateState::Checking);
                 }
             }
+            MenuAction::Downloads => self.open_download_search(),
+            MenuAction::WifiTransfer => self.start_wifi(),
             MenuAction::Logout => {
                 let confirm = self.menu.as_ref().map(|m| m.confirm_logout).unwrap_or(false);
                 if confirm {
@@ -1128,6 +1196,129 @@ impl App {
         }
     }
 
+    fn handle_download(&mut self, ev: DownloadEvent) {
+        use DownloadEvent as E;
+        match ev {
+            E::Searching => {
+                self.dls.searching = true;
+                self.dls.error = None;
+                self.dls.results.clear();
+            }
+            E::Results { id, results } => {
+                // A slow search that the user has already replaced is ignored.
+                if id >= self.dls.id {
+                    self.dls.id = id;
+                    self.dls.searching = false;
+                    self.dls.results = results;
+                }
+            }
+            E::Queue(names) => self.dls.queue = names,
+            E::Progress { name, stage, done, total } => {
+                self.dls.progress = Some((name, stage, done, total))
+            }
+            E::Complete(path) => {
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                self.dls.progress = None;
+                self.toast(format!("Đã tải xong {name}"));
+                self.start_scan();
+            }
+            E::Error(e) => {
+                self.dls.searching = false;
+                self.dls.progress = None;
+                self.dls.error = Some(e.clone());
+                self.toast(e);
+            }
+        }
+    }
+
+    fn handle_wifi(&mut self, ev: WifiEvent) {
+        match ev {
+            WifiEvent::Started(url) => {
+                if let Some(w) = self.wifi.as_mut() {
+                    w.url = url;
+                }
+            }
+            WifiEvent::Received { name, size } => {
+                if let Some(w) = self.wifi.as_mut() {
+                    w.files.push((name.clone(), size));
+                }
+                self.toast(format!("Đã nhận {name}"));
+            }
+            WifiEvent::Error(e) => self.toast(e),
+            WifiEvent::Stopped => {}
+        }
+    }
+
+    fn open_search(&mut self, target: SearchTarget) {
+        let vi = self.cfg.search_keyboard != "en";
+        self.stack.push(View::Search(Keyboard::new(vi), target));
+    }
+
+    fn run_search(&mut self, target: SearchTarget, query: String) {
+        match target {
+            SearchTarget::Spotify => self.open_source(Source::Search(query), None),
+            SearchTarget::Download => self.start_download_search(query),
+        }
+    }
+
+    fn open_download_search(&mut self) {
+        if self.cfg.music_dir.trim().is_empty() {
+            self.toast("Hãy chọn thư mục nhạc trước");
+            self.open_picker();
+            return;
+        }
+        self.open_search(SearchTarget::Download);
+    }
+
+    /// Runs a query on the slskd server and opens the results screen.
+    fn start_download_search(&mut self, query: String) {
+        self.dls.searching = true;
+        self.dls.error = None;
+        self.dls.results.clear();
+        let _ = self.dl.send(DownloadCmd::Search(query.clone()));
+        self.stack.push(View::Downloads(DownloadsView {
+            query,
+            state: ListState::new(),
+        }));
+    }
+
+    fn enqueue_download(&mut self, index: usize) {
+        let Some(item) = self.dls.results.get(index).cloned() else {
+            return;
+        };
+        let name = item.base_name().to_string();
+        self.dls.picked.insert(item.filename.clone());
+        let _ = self.dl.send(DownloadCmd::Enqueue(Box::new(item)));
+        self.toast(format!("Đã thêm vào hàng đợi: {name}"));
+    }
+
+    fn start_wifi(&mut self) {
+        if self.cfg.music_dir.trim().is_empty() {
+            self.toast("Hãy chọn thư mục nhạc trước");
+            self.open_picker();
+            return;
+        }
+        if self.wifi.is_none() {
+            let dir = PathBuf::from(&self.cfg.music_dir);
+            let ui = self.local_event_tx();
+            self.wifi = Some(wifi_transfer::start(&self.rt, dir, ui));
+        }
+        self.stack.push(View::Wifi);
+    }
+
+    /// Closes the WiFi server and picks up whatever arrived.
+    fn stop_wifi(&mut self) {
+        if let Some(mut w) = self.wifi.take() {
+            w.stop();
+            if !w.files.is_empty() {
+                self.start_scan();
+            }
+        }
+    }
+
     // ------------------------------------------------------------ input
 
     fn is_repeatable(&self, b: Button) -> bool {
@@ -1135,7 +1326,7 @@ impl App {
             b,
             Button::Up | Button::Down | Button::L1 | Button::R1 | Button::VolUp | Button::VolDown
         ) || (matches!(b, Button::Left | Button::Right)
-            && matches!(self.stack.last(), Some(View::Search(_) | View::Feed(_))))
+            && matches!(self.stack.last(), Some(View::Search(..) | View::Feed(_))))
     }
 
     fn handle_button(&mut self, b: Button, repeat: bool, screen: &mut dyn Screen) {
@@ -1310,8 +1501,9 @@ impl App {
                 Button::Start if !repeat => self.open_menu(),
                 _ => {}
             },
-            View::Search(kb) => {
+            View::Search(kb, target) => {
                 let vi = kb.vi;
+                let target = *target;
                 match b {
                     Button::Up => kb.move_by(0, -1),
                     Button::Down => kb.move_by(0, 1),
@@ -1320,7 +1512,7 @@ impl App {
                     Button::A => {
                         if kb.press() {
                             let q = kb.text.trim().to_string();
-                            self.open_source(Source::Search(q), None);
+                            self.run_search(target, q);
                             return;
                         }
                     }
@@ -1330,7 +1522,7 @@ impl App {
                     Button::Start if !repeat => {
                         let q = kb.text.trim().to_string();
                         if !q.is_empty() {
-                            self.open_source(Source::Search(q), None);
+                            self.run_search(target, q);
                             return;
                         }
                     }
@@ -1436,6 +1628,39 @@ impl App {
                     _ => {}
                 }
             }
+            View::Downloads(dv) => {
+                let len = self.dls.results.len();
+                let sel = dv.state.sel;
+                match b {
+                    Button::Up => dv.state.move_by(-1, len, true),
+                    Button::Down => dv.state.move_by(1, len, true),
+                    Button::L1 => dv.state.move_by(-page, len, false),
+                    Button::R1 => dv.state.move_by(page, len, false),
+                    Button::L2 if len > 0 => dv.state.set(0, len),
+                    Button::R2 if len > 0 => dv.state.set(len - 1, len),
+                    Button::A if !repeat && len > 0 => self.enqueue_download(sel),
+                    Button::Select if !repeat => {
+                        let _ = self.dl.send(DownloadCmd::Cancel);
+                        self.dls.picked.clear();
+                        self.toast("Đã hủy hàng đợi tải");
+                    }
+                    Button::B if !repeat => {
+                        self.stack.pop();
+                    }
+                    Button::Y if !repeat => self.open_now_playing(),
+                    Button::Start if !repeat => self.open_menu(),
+                    _ => {}
+                }
+            }
+            View::Wifi => match b {
+                Button::B if !repeat => {
+                    self.stop_wifi();
+                    self.stack.pop();
+                }
+                Button::Y if !repeat => self.open_now_playing(),
+                Button::Start if !repeat => self.open_menu(),
+                _ => {}
+            },
             View::Picker(pv) => {
                 let len = pv.len();
                 match b {
@@ -1700,10 +1925,7 @@ impl App {
         match sel {
             0 => self.open_feed(),
             1 => self.open_source(Source::Liked, None),
-            2 => {
-                let vi = self.cfg.search_keyboard != "en";
-                self.stack.push(View::Search(Keyboard::new(vi)));
-            }
+            2 => self.open_search(SearchTarget::Spotify),
             3 => self.open_local_home(),
             n => match &self.playlists {
                 Some(Ok(list)) => {
@@ -1840,6 +2062,8 @@ pub fn run(
     rx: Receiver<UiMsg>,
     tx: Sender<UiMsg>,
     cmd: UnboundedSender<Cmd>,
+    dl: UnboundedSender<DownloadCmd>,
+    rt: tokio::runtime::Handle,
     cfg: Config,
     paths: Paths,
 ) -> Exit {
@@ -1855,7 +2079,7 @@ pub fn run(
         },
         tx.clone(),
     );
-    let mut app = App::new(cfg, paths, cmd, local_tx);
+    let mut app = App::new(cfg, paths, cmd, dl, rt, local_tx);
     app.ui_tx = Some(tx.clone());
     if let Some(v) = update::just_updated(&app.paths.data_dir) {
         app.toast(format!("Đã cập nhật lên phiên bản {v}"));
@@ -1911,6 +2135,8 @@ pub fn run(
                 }
                 UiMsg::Backend(ev) => app.handle_backend(ev),
                 UiMsg::Local(ev) => app.handle_local(ev),
+                UiMsg::Download(ev) => app.handle_download(ev),
+                UiMsg::Wifi(ev) => app.handle_wifi(ev),
             }
         }
         if !screen.pump(&tx) {
@@ -1955,7 +2181,9 @@ pub fn run(
 
     // Remember the local volume, stop both players and wait briefly for Spotify.
     app.cfg.save(&app.paths);
+    app.stop_wifi();
     app.local_send(LocalCmd::Shutdown);
+    let _ = app.dl.send(DownloadCmd::Shutdown);
     let _ = app.cmd.send(Cmd::Shutdown);
     let deadline = Instant::now() + Duration::from_secs(3);
     while let Ok(m) = rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {

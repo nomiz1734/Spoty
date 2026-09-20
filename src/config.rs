@@ -100,6 +100,10 @@ pub struct Config {
     pub time_zone: String,
     /// Search keyboard layout at start: "vi" (Telex) or "en" (plain letters).
     pub search_keyboard: String,
+    /// Own slskd server for downloading music, e.g. "https://spoty-music.duckdns.org" ("" = off).
+    pub slskd_url: String,
+    /// API key for that server (sent as X-Api-Key).
+    pub slskd_api_key: String,
 }
 
 impl Default for Config {
@@ -128,6 +132,8 @@ impl Default for Config {
             autoplay: true,
             time_zone: String::new(),
             search_keyboard: "vi".into(),
+            slskd_url: String::new(),
+            slskd_api_key: String::new(),
         }
     }
 }

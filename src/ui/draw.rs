@@ -7,7 +7,7 @@ use crate::spotify::{ConnState, Repeat, Source, TrackInfo};
 
 use super::theme::*;
 use super::widgets::{Key, Keyboard, ListState, BOTTOM_ROW, KEY_COLS, KEY_ROWS};
-use super::{App, View};
+use super::{App, DownloadsView, View};
 
 struct Ctx<'a> {
     c: &'a mut Canvas,
@@ -31,7 +31,9 @@ pub fn frame(c: &mut Canvas, f: &mut Fonts, ic: &mut IconCache, app: &mut App) {
         match &mut view {
             View::Home(state) => draw_home(&mut x, app, state),
             View::Tracks(tv) => draw_tracks(&mut x, app, tv),
-            View::Search(kb) => draw_search(&mut x, app, kb),
+            View::Search(kb, _) => draw_search(&mut x, app, kb),
+            View::Downloads(dv) => draw_downloads(&mut x, app, dv),
+            View::Wifi => draw_wifi(&mut x, app),
             View::Local(state) => draw_local_home(&mut x, app, state),
             View::Feed(fs) => draw_feed(&mut x, app, fs),
             View::Entries(ev) => draw_entries(&mut x, app, ev),
@@ -840,6 +842,210 @@ fn draw_search(x: &mut Ctx, app: &mut App, kb: &mut Keyboard) {
             ("START", "Tìm"),
         ],
     );
+}
+
+/// Results from the slskd server: pick one and it downloads into the library.
+fn draw_downloads(x: &mut Ctx, app: &mut App, dv: &mut DownloadsView) {
+    let w = x.c.w as i32;
+    let full = content_rect(x, app);
+    // What was searched for, above the list.
+    x.ic.draw(x.c, Icon::Search, SIDE_PAD, full.y + 8, 24, SUBTEXT);
+    x.f.draw_fit(
+        x.c,
+        SIDE_PAD + 34,
+        full.y + 7,
+        w - 2 * SIDE_PAD - 200,
+        &dv.query,
+        20.0,
+        Weight::Bold,
+        TEXT,
+    );
+    let len = app.dls.results.len();
+    if len > 0 {
+        let count = format!("{len} kết quả");
+        x.f.draw_right(x.c, w - SIDE_PAD, full.y + 8, &count, 18.0, Weight::Regular, DIM);
+    }
+
+    // A running download, or the queue, sits between the list and the hints.
+    let status_h = if app.dls.progress.is_some() || !app.dls.queue.is_empty() { 78 } else { 0 };
+    let area = Rect::new(0, full.y + 44, w, full.h - 44 - status_h);
+
+    if app.dls.searching {
+        spinner(x, app, (w / 2) as f32, (area.y + 70) as f32, 18.0, TEXT);
+        x.f.draw_centered(
+            x.c,
+            w / 2,
+            area.y + 108,
+            "Đang tìm trên Soulseek…",
+            22.0,
+            Weight::Regular,
+            SUBTEXT,
+        );
+    } else if let Some(e) = app.dls.error.clone() {
+        for (i, line) in x.f.wrap(&e, 20.0, Weight::Regular, (w - 120) as f32, 3).iter().enumerate() {
+            x.f.draw_centered(x.c, w / 2, area.y + 70 + i as i32 * 30, line, 20.0, Weight::Regular, ERROR);
+        }
+    } else if len == 0 {
+        x.f.draw_centered(x.c, w / 2, area.y + 70, "Không tìm thấy bài nào", 22.0, Weight::Regular, SUBTEXT);
+        x.f.draw_centered(
+            x.c,
+            w / 2,
+            area.y + 106,
+            "Thử bỏ dấu, hoặc thêm tên nghệ sĩ và \"flac\"",
+            18.0,
+            Weight::Regular,
+            DIM,
+        );
+    }
+
+    dv.state.set_geometry(HOME_ROW_H as f32, area.h as f32, len);
+    let y0 = list_frame(x, &dv.state, area, len);
+    x.c.set_clip(area);
+    for i in dv.state.visible(len) {
+        let r = &app.dls.results[i];
+        let ry = (y0 + i as f32 * HOME_ROW_H as f32).round() as i32;
+        let picked = app.dls.picked.contains(&r.filename);
+        let (title, quality) = (r.base_name().to_string(), r.quality());
+        let mut right = format!("{}", r.username);
+        if let Some(speed) = r.speed {
+            right.push_str(&format!(" · {:.1} MB/s", speed as f64 / 1_048_576.0));
+        }
+        if !r.free_slot {
+            right.push_str(" · bận");
+        } else if r.queue > 0 {
+            right.push_str(&format!(" · chờ {}", r.queue));
+        }
+        let icon = if r.is_lossless { Icon::Disc } else { Icon::Note };
+        let tx = SIDE_PAD + 4;
+        let ty = ry + (HOME_ROW_H - HOME_THUMB as i32) / 2;
+        let tint = if r.is_lossless { ACCENT } else { TEXT };
+        icon_tile(x, icon, tx, ty, HOME_THUMB as i32, ELEVATED, tint);
+        let text_x = tx + HOME_THUMB as i32 + 18;
+        let right_w = x.f.measure(&right, 17.0, Weight::Regular) as i32;
+        let max = w - text_x - SIDE_PAD - right_w - 40;
+        x.f.draw_fit(x.c, text_x, ry + 14, max, &title, 23.0, Weight::Bold, TEXT);
+        x.f.draw_fit(x.c, text_x, ry + 45, max, &quality, 18.0, Weight::Regular, SUBTEXT);
+        x.f.draw_right(x.c, w - SIDE_PAD, ry + 45, &right, 17.0, Weight::Regular, DIM);
+        if picked {
+            x.ic.draw(x.c, Icon::Check, w - SIDE_PAD - 26, ry + 12, 26, ACCENT);
+        }
+    }
+    x.c.reset_clip();
+
+    if status_h > 0 {
+        let sy = area.y + area.h;
+        x.c.fill_rect(0, sy, w, status_h, SURFACE);
+        match app.dls.progress.clone() {
+            Some((name, stage, done, total)) => {
+                let what = match stage {
+                    crate::download::Stage::Peer => "Nguồn đang gửi về máy chủ",
+                    crate::download::Stage::Server => "Đang tải về máy",
+                };
+                x.f.draw_fit(x.c, SIDE_PAD, sy + 10, w - 2 * SIDE_PAD - 120, &name, 19.0, Weight::Bold, TEXT);
+                let frac = if total > 0 { (done as f32 / total as f32).min(1.0) } else { 0.0 };
+                let bar_w = w - 2 * SIDE_PAD;
+                x.c.fill_rounded(SIDE_PAD, sy + 40, bar_w, 8, 4, HIGHLIGHT);
+                x.c.fill_rounded(SIDE_PAD, sy + 40, ((bar_w as f32 * frac) as i32).max(8), 8, 4, ACCENT);
+                x.f.draw(x.c, SIDE_PAD, sy + 52, what, 17.0, Weight::Regular, SUBTEXT);
+                let pct = format!("{}%", (frac * 100.0) as u32);
+                x.f.draw_right(x.c, w - SIDE_PAD, sy + 10, &pct, 19.0, Weight::Bold, ACCENT);
+                if app.dls.queue.len() > 1 {
+                    let rest = format!("còn {} file", app.dls.queue.len() - 1);
+                    x.f.draw_right(x.c, w - SIDE_PAD, sy + 52, &rest, 17.0, Weight::Regular, DIM);
+                }
+            }
+            None => {
+                let msg = format!("Đang chờ tải: {}", app.dls.queue.join(", "));
+                x.f.draw_fit(x.c, SIDE_PAD, sy + 26, w - 2 * SIDE_PAD, &msg, 19.0, Weight::Regular, SUBTEXT);
+            }
+        }
+        app.anim_request = true;
+    }
+
+    top_bar(x, app, "Tải nhạc", true);
+    if show_mini(app) {
+        mini_player(x, app);
+    }
+    hints(
+        x,
+        &[("A", "Tải về"), ("SELECT", "Hủy hàng đợi"), ("Y", "Đang phát"), ("B", "Quay lại")],
+    );
+}
+
+/// "Nhận nhạc qua WiFi": the address to type on the phone, and what arrived.
+fn draw_wifi(x: &mut Ctx, app: &mut App) {
+    let w = x.c.w as i32;
+    let area = content_rect(x, app);
+    let cx = w / 2;
+    let (url, files) = match app.wifi.as_ref() {
+        Some(wifi) => (wifi.url.clone(), wifi.files.clone()),
+        None => (String::new(), Vec::new()),
+    };
+    x.f.draw_centered(
+        x.c,
+        cx,
+        area.y + 18,
+        "Mở trình duyệt trên điện thoại và truy cập",
+        22.0,
+        Weight::Regular,
+        SUBTEXT,
+    );
+    // The address, big enough to read from a phone in the other hand.
+    let box_w = w - 2 * SIDE_PAD - 80;
+    let bx = (w - box_w) / 2;
+    x.c.fill_rounded(bx, area.y + 60, box_w, 92, 14, ELEVATED);
+    x.f.draw_centered(x.c, cx, area.y + 85, &url, 40.0, Weight::Bold, ACCENT);
+    x.f.draw_centered(
+        x.c,
+        cx,
+        area.y + 168,
+        "Máy và điện thoại phải cùng một mạng WiFi",
+        19.0,
+        Weight::Regular,
+        DIM,
+    );
+
+    let total: u64 = files.iter().map(|(_, n)| n).sum();
+    let head = if files.is_empty() {
+        "Đang chờ kết nối…".to_string()
+    } else {
+        format!("Đã nhận {} file · {:.0} MB", files.len(), total as f64 / 1_048_576.0)
+    };
+    let ly = area.y + 216;
+    x.f.draw(x.c, SIDE_PAD + 4, ly, &head, 22.0, Weight::Bold, TEXT);
+    if files.is_empty() {
+        spinner(x, app, (w - SIDE_PAD - 18) as f32, (ly + 12) as f32, 12.0, SUBTEXT);
+    }
+    // Newest first, as many as fit.
+    let row_h = 46;
+    let rows = ((area.y + area.h - ly - 44) / row_h).max(0) as usize;
+    for (i, (name, size)) in files.iter().rev().take(rows).enumerate() {
+        let ry = ly + 44 + i as i32 * row_h;
+        x.ic.draw(x.c, Icon::Check, SIDE_PAD + 4, ry + 2, 22, ACCENT);
+        let sz = format!("{:.1} MB", *size as f64 / 1_048_576.0);
+        let sw = x.f.measure(&sz, 18.0, Weight::Regular) as i32;
+        x.f.draw_fit(
+            x.c,
+            SIDE_PAD + 38,
+            ry,
+            w - SIDE_PAD * 2 - sw - 60,
+            name,
+            20.0,
+            Weight::Regular,
+            TEXT,
+        );
+        x.f.draw_right(x.c, w - SIDE_PAD, ry, &sz, 18.0, Weight::Regular, DIM);
+    }
+    if files.len() > rows {
+        let more = format!("… và {} file nữa", files.len() - rows);
+        x.f.draw(x.c, SIDE_PAD + 38, ly + 44 + rows as i32 * row_h, &more, 18.0, Weight::Regular, DIM);
+    }
+
+    top_bar(x, app, "Nhận nhạc qua WiFi", true);
+    if show_mini(app) {
+        mini_player(x, app);
+    }
+    hints(x, &[("B", "Tắt và quay lại"), ("Y", "Đang phát")]);
 }
 
 fn draw_menu(x: &mut Ctx, app: &mut App) {

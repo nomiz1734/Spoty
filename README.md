@@ -4,6 +4,7 @@ Spoty là app nghe nhạc cho **TrimUI Brick Pro** (và Brick) chạy **firmware
 
 - **Spotify**: trang **Dành cho bạn** (đề xuất hôm nay, Daily Mix, nghe gần đây…), duyệt thư viện, tìm kiếm và phát ngay trên máy. Hết playlist thì **tự phát tiếp bài tương tự** như app Spotify. Máy cũng là một loa Spotify Connect, điều khiển được từ điện thoại.
 - **Nhạc trên máy**: phát file bạn đã tải về, cả **lossless** (FLAC, ALAC, WAV, AIFF) lẫn **lossy** (MP3, AAC, Vorbis, Opus). Chất lượng được giữ tốt nhất có thể, bit-perfect khi phần cứng cho phép.
+- **Đưa nhạc vào máy**: nhận file từ điện thoại qua WiFi ngay trong trình duyệt, hoặc tải nhạc lossless từ máy chủ [slskd](https://github.com/slskd/slskd) của riêng bạn.
 - **Cập nhật OTA**: app tự báo khi có bản mới và cập nhật ngay trên máy.
 
 | Dành cho bạn | Thư viện | Đang phát (Hi-Res) |
@@ -13,6 +14,10 @@ Spoty là app nghe nhạc cho **TrimUI Brick Pro** (và Brick) chạy **firmware
 | Nhạc trên máy | Album trên máy | Cập nhật OTA |
 |---|---|---|
 | ![](docs/07_local_home.png) | ![](docs/08_local_albums.png) | ![](docs/12_update_available.png) |
+
+| Nhận nhạc qua WiFi | Tải nhạc lossless |
+|---|---|
+| ![](docs/16_wifi.png) | ![](docs/15_downloads.png) |
 
 ## Cài đặt
 
@@ -51,6 +56,18 @@ Spoty ghi nhớ tài khoản ở `data/account/`. Muốn đổi tài khoản th�
 Album được gom theo **nghệ sĩ chính**, nên các bài có nghệ sĩ góp giọng ("RPT MCK, tlinh", "Lil Wuyn/ VSoul") vẫn nằm trong cùng một album. Mục **Nghệ sĩ** liệt kê bài hát dưới mọi nghệ sĩ tham gia. Khi hàng đợi phát hết, app **tự phát tiếp** các bài khác của cùng nghệ sĩ, rồi đến bài ngẫu nhiên trong thư viện (cùng tùy chọn `autoplay`).
 
 Lần quét sau chỉ đọc lại những file mới hoặc đã thay đổi (dựa vào kích thước và thời gian sửa), nên rất nhanh. Chọn **Quét lại thư viện** sau khi chép thêm nhạc.
+
+### Nhận nhạc qua WiFi
+
+Không cần tháo thẻ nhớ: **MENU → Nhận nhạc qua WiFi**. Máy hiện một địa chỉ dạng `http://192.168.1.42:8080`; mở địa chỉ đó trên điện thoại (cùng mạng WiFi), kéo thả file vào trang là xong. File được lưu thẳng vào thư mục nhạc và thư viện tự quét lại khi bạn thoát màn hình.
+
+Server chỉ chạy khi màn hình này đang mở, chỉ nhận đúng các định dạng nhạc ở trên, và tên file được làm sạch trước khi lưu. Bấm **B** để tắt.
+
+### Tải nhạc lossless (slskd)
+
+Nếu bạn tự dựng một máy chủ [slskd](https://github.com/slskd/slskd) (xem `implementation_plan.md` và `PHASE1-SETUP-GUIDE.md`), điền `slskd_url` và `slskd_api_key` vào `settings.json` rồi chọn **MENU → Tải nhạc**. Gõ tên bài (có cả bộ gõ Telex), chọn bản muốn tải, app tải về thẳng thư mục nhạc: ưu tiên nguồn còn chỗ trống và bản lossless, tải một file một lúc, rớt mạng thì tải tiếp chứ không tải lại từ đầu.
+
+Mục menu này chỉ hiện khi đã điền `slskd_url`.
 
 **Tên bài, nghệ sĩ, album** lấy từ tag trong file (ID3, Vorbis comment, MP4). Nếu file không có tag, Spoty dùng tên file làm tên bài và tên thư mục làm tên album. **Ảnh bìa** lấy từ ảnh nhúng trong file; nếu không có thì dùng `cover.jpg`, `folder.jpg`, `front.jpg` (hoặc `.png`) nằm cạnh file.
 
@@ -91,7 +108,7 @@ Spotify và nhạc trên máy **dùng chung loa**: bên này phát thì bên kia
 | L2 / R2 | Về đầu / cuối danh sách | — | — |
 | SELECT | Nhảy tới bài đang phát | — | Xóa hết / hủy |
 | START | Tùy chọn (mở album/nghệ sĩ…) | Tùy chọn | Tìm / chọn thư mục |
-| MENU | Menu: nhạc trên máy, cập nhật, tắt màn hình, đăng xuất, **thoát** | | |
+| MENU | Menu: nhạc trên máy, tải nhạc, nhận nhạc qua WiFi, cập nhật, tắt màn hình, đăng xuất, **thoát** | | |
 | Nguồn | Tắt/bật màn hình, **nhạc vẫn phát** | | |
 
 Ở **Dành cho bạn**: ▲▼ đổi kệ, ◀▶ chọn thẻ (L1/R1 nhảy 4 thẻ), A mở, X phát ngẫu nhiên, SELECT làm mới.
@@ -132,6 +149,8 @@ File này được tạo ở lần chạy đầu tiên, và tự thêm các khó
 | `autoplay` | `true` | Hết playlist/album thì tự phát bài tương tự (Spotify và nhạc trên máy) |
 | `time_zone` | `""` | Múi giờ cho trang Dành cho bạn (`""` = của máy, mặc định Asia/Ho_Chi_Minh) |
 | `search_keyboard` | `"vi"` | Bàn phím tìm kiếm: `vi` (Telex) hoặc `en` |
+| `slskd_url` | `""` | Máy chủ slskd riêng để tải nhạc, ví dụ `https://nhac.duckdns.org` (`""` = tắt). Đang thử nghiệm, chưa có giao diện |
+| `slskd_api_key` | `""` | API key của máy chủ đó (gửi qua `X-Api-Key`, bắt buộc HTTPS) |
 | `device_name` | `"TrimUI Brick Pro"` | Tên hiện trong danh sách Spotify Connect |
 | `bitrate` | `320` | Chất lượng Spotify: 96 / 160 / 320 kbps |
 | `initial_volume` | `70` | Âm lượng Spotify lần đầu (%) |
@@ -155,6 +174,8 @@ File này được tạo ở lần chạy đầu tiên, và tự thêm các khó
   - `./spoty --scan-test /mnt/SDCARD/Music`: quét thư mục như app.
   - `./spoty --update-check <url>`: thử đọc `update.json`.
   - `./spoty --home-test`: tải trang Dành cho bạn bằng tài khoản đã lưu và in các kệ.
+  - `./spoty --slskd-test <từ khóa>`: tìm nhạc trên máy chủ slskd và in kết quả đã xếp hạng.
+  - `./spoty --slskd-get <từ khóa>`: tải bản tốt nhất về thư mục nhạc, in tiến trình cả hai chặng.
 - **Không thấy máy trong danh sách thiết bị trên điện thoại:** kiểm tra hai máy cùng Wi-Fi. Router có thể đang chặn mDNS giữa các thiết bị (chế độ "AP isolation" hoặc mạng khách).
 - **Nút bấm bị lệch:** chạy với `SPOTY_LOG=debug` để thấy mã phím chưa được gán, rồi thêm vào `keymap`.
 - **Không có tiếng / tiếng rè:** thử `"audio_output_format": "s16"`, `"audio_device": "hw:0,0"`, hoặc tăng `audio_latency_ms`.

@@ -1,2 +1,3 @@
-• Tìm kiếm gõ được tiếng Việt kiểu Telex (tinhf = tình, dduwowngf = đường); nút VI | EN (hoặc L1) để chuyển sang gõ tiếng Anh
-• Nút xóa hết chữ trong ô tìm kiếm: bấm lên từ hàng phím số rồi A (hoặc SELECT), sau đó B để thoát
+• Nhận nhạc qua WiFi: mở MENU rồi chọn "Nhận nhạc qua WiFi", mở địa chỉ hiện trên màn hình bằng trình duyệt điện thoại và kéo thả file nhạc vào, không cần tháo thẻ nhớ
+• File nhận được lưu thẳng vào thư mục nhạc và thư viện tự quét lại
+• Thêm mục "Tải nhạc" để tải nhạc lossless từ máy chủ slskd của riêng bạn (thử nghiệm; cần điền slskd_url và slskd_api_key trong settings.json)

@@ -2,13 +2,16 @@
 
 mod audio;
 mod config;
+mod download;
 mod gfx;
 mod local;
 mod logger;
+mod net;
 mod platform;
 mod spotify;
 mod ui;
 mod update;
+mod wifi_transfer;
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -45,6 +48,22 @@ fn main() {
         let cfg = config::Config::load(&paths);
         let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
         rt.block_on(spotify::home_selftest(cfg, paths));
+        return;
+    }
+    if let Some(i) = args.iter().position(|a| a == "--slskd-test") {
+        // Searches the download server and prints the results the UI would list.
+        let cfg = config::Config::load(&paths);
+        let query = args[i + 1..].join(" ");
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(download::search_selftest(&cfg, &query));
+        return;
+    }
+    if let Some(i) = args.iter().position(|a| a == "--slskd-get") {
+        // Downloads the best match into music_dir, printing both stages.
+        let cfg = config::Config::load(&paths);
+        let query = args[i + 1..].join(" ");
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(download::download_selftest(&cfg, &query));
         return;
     }
     if let Some(i) = args.iter().position(|a| a == "--update-check") {
@@ -104,8 +123,9 @@ fn main() {
         .build()
         .expect("tokio runtime");
     let cmd = spotify::spawn(&rt, cfg.clone(), paths.clone(), tx.clone());
+    let dl = download::spawn(rt.handle(), &cfg, tx.clone());
 
-    let exit = ui::run(screen, fonts, rx, tx, cmd, cfg, paths.clone());
+    let exit = ui::run(screen, fonts, rx, tx, cmd, dl, rt.handle().clone(), cfg, paths.clone());
 
     rt.shutdown_timeout(Duration::from_secs(1));
     log::logger().flush();

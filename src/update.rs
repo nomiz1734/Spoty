@@ -85,25 +85,6 @@ pub fn is_newer(candidate: &str, current: &str) -> bool {
     false
 }
 
-fn resolve(base: &str, reference: &str) -> String {
-    if reference.starts_with("https://") || reference.starts_with("http://") {
-        return reference.to_string();
-    }
-    if let Some(rest) = reference.strip_prefix('/') {
-        // Absolute path on the same host.
-        let host_end = base
-            .find("://")
-            .and_then(|i| base[i + 3..].find('/').map(|j| i + 3 + j))
-            .unwrap_or(base.len());
-        return format!("{}/{}", &base[..host_end], rest);
-    }
-    let dir = match base.rfind('/') {
-        Some(i) => &base[..=i],
-        None => base,
-    };
-    format!("{dir}{reference}")
-}
-
 /// GET with redirects (GitHub release downloads always redirect).
 async fn get(client: &HttpClient, url: &str) -> Result<Response<Incoming>, String> {
     let mut url = url.to_string();
@@ -128,7 +109,7 @@ async fn get(client: &HttpClient, url: &str) -> Result<Response<Incoming>, Strin
                 .get(LOCATION)
                 .and_then(|v| v.to_str().ok())
                 .ok_or("redirect không có Location")?;
-            url = resolve(&url, loc);
+            url = crate::net::resolve(&url, loc);
             continue;
         }
         if !status.is_success() {
@@ -155,7 +136,7 @@ pub async fn check(manifest_url: &str) -> Result<Option<UpdateInfo>, String> {
     }
     let url = match (m.url, m.file) {
         (Some(u), _) => u,
-        (None, Some(f)) => resolve(manifest_url, &f),
+        (None, Some(f)) => crate::net::resolve(manifest_url, &f),
         (None, None) => return Err("update.json thiếu \"file\" hoặc \"url\"".into()),
     };
     Ok(Some(UpdateInfo {
@@ -325,14 +306,4 @@ mod tests {
         assert!(!is_newer("0.1.9", "0.2.0"));
     }
 
-    #[test]
-    fn relative_urls() {
-        let m = "https://github.com/a/b/releases/latest/download/update.json";
-        assert_eq!(
-            resolve(m, "spoty-update.tar.gz"),
-            "https://github.com/a/b/releases/latest/download/spoty-update.tar.gz"
-        );
-        assert_eq!(resolve(m, "/x/y"), "https://github.com/x/y");
-        assert_eq!(resolve(m, "https://cdn/z"), "https://cdn/z");
-    }
 }

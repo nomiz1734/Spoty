@@ -8,20 +8,15 @@
 //! player's JavaScript.
 
 use std::path::Path;
-use std::sync::OnceLock;
 
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
-use hyper::header::{HeaderName, HeaderValue, LOCATION};
-use hyper::{Method, Request};
-use hyper_util::client::legacy::connect::HttpConnector;
-use hyper_util::client::legacy::Client;
-use hyper_util::rt::TokioExecutor;
+use hyper::Method;
 use librespot_core::Session;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::gfx::text::clean;
+use crate::net;
 
 /// `home` persisted-query hash from the web player (2026-09).
 const DEFAULT_HASH: &str = "76243c78b0e20ecdbe41b794dec8cbe73f75e585b0a7201b8d2e84578412847a";
@@ -53,61 +48,16 @@ pub struct FeedSection {
     pub items: Vec<FeedItem>,
 }
 
-type Https = hyper_rustls::HttpsConnector<HttpConnector>;
-
-fn client() -> &'static Client<Https, Full<Bytes>> {
-    static CLIENT: OnceLock<Client<Https, Full<Bytes>>> = OnceLock::new();
-    CLIENT.get_or_init(|| {
-        let https = hyper_rustls::HttpsConnectorBuilder::new()
-            .with_webpki_roots()
-            .https_only()
-            .enable_http1()
-            .build();
-        Client::builder(TokioExecutor::new()).build(https)
-    })
-}
-
-/// A request with a browser user agent; follows redirects for GETs.
+/// A request with a browser user agent: Spotify's web endpoints reject the rest.
 async fn fetch(
     method: Method,
     url: &str,
     headers: &[(&str, String)],
     body: Option<Vec<u8>>,
 ) -> Result<(u16, Bytes), String> {
-    let mut url = url.to_string();
-    for _ in 0..6 {
-        let mut req = Request::builder().method(method.clone()).uri(&url);
-        let h = req.headers_mut().ok_or("bad request")?;
-        h.insert("user-agent", HeaderValue::from_static(BROWSER_UA));
-        for (k, v) in headers {
-            let name = HeaderName::from_bytes(k.as_bytes()).map_err(|e| e.to_string())?;
-            let value = HeaderValue::from_str(v).map_err(|e| e.to_string())?;
-            h.insert(name, value);
-        }
-        let req = req
-            .body(Full::new(Bytes::from(body.clone().unwrap_or_default())))
-            .map_err(|e| e.to_string())?;
-        let resp = client().request(req).await.map_err(|e| format!("mạng: {e}"))?;
-        let status = resp.status();
-        if status.is_redirection() && method == Method::GET {
-            if let Some(loc) = resp.headers().get(LOCATION).and_then(|v| v.to_str().ok()) {
-                url = if loc.starts_with("http") {
-                    loc.to_string()
-                } else {
-                    format!("https://open.spotify.com{loc}")
-                };
-                continue;
-            }
-        }
-        let bytes = resp
-            .into_body()
-            .collect()
-            .await
-            .map_err(|e| e.to_string())?
-            .to_bytes();
-        return Ok((status.as_u16(), bytes));
-    }
-    Err("quá nhiều lần chuyển hướng".into())
+    let mut all = vec![("user-agent", BROWSER_UA.to_string())];
+    all.extend(headers.iter().map(|(k, v)| (*k, v.clone())));
+    net::fetch(method, url, &all, body, net::CALL_TIMEOUT).await
 }
 
 fn time_zone(configured: &str) -> String {

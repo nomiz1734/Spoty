@@ -11,10 +11,12 @@ use crate::local::{Library, LocalTrack};
 use crate::platform::Battery;
 use crate::spotify::{Cmd, ConnState, PlaylistInfo, Repeat, Source, TrackInfo, TrackList};
 use crate::spotify::home::{FeedItem, FeedKind, FeedSection};
+use crate::download::{SearchResult, Stage};
 use crate::update::{UpdateInfo, UpdateState};
+use crate::wifi_transfer;
 
 use super::widgets::{FeedState, Keyboard, ListState};
-use super::{draw, App, Menu, Owner, PickerView, TracksView, View};
+use super::{draw, App, DownloadsView, Menu, Owner, PickerView, SearchTarget, TracksView, View};
 
 fn fake_cover(url: &str, size: u32) -> Image {
     let mut hash: u32 = 2166136261;
@@ -53,6 +55,30 @@ fn settle(app: &mut App) {
     }
     app.bg_from = app.bg_to;
     app.bg_t0 = Instant::now() - std::time::Duration::from_secs(1);
+}
+
+fn demo_results() -> Vec<SearchResult> {
+    let mk = |user: &str, file: &str, size: u64, lossless: bool, speed: u64, free: bool, queue: u32| {
+        SearchResult {
+            username: user.into(),
+            filename: file.into(),
+            size,
+            bit_depth: if lossless { Some(16) } else { None },
+            sample_rate: if lossless { Some(44_100) } else { None },
+            bitrate: if lossless { None } else { Some(320) },
+            length_s: Some(245),
+            is_lossless: lossless,
+            speed: Some(speed),
+            free_slot: free,
+            queue,
+        }
+    };
+    vec![
+        mk("hifi_vn", "@@a\\Nhac\\01 - Đừng Như Thói Quen.flac", 32_100_000, true, 3_355_443, true, 0),
+        mk("lossless_share", "@@b\\V-Pop\\Đừng Như Thói Quen (Jaykii).flac", 30_800_000, true, 1_887_436, true, 2),
+        mk("musicfan", "@@c\\Ballad\\Dung Nhu Thoi Quen.mp3", 9_400_000, false, 1_153_433, true, 0),
+        mk("slowpeer", "@@d\\FLAC\\Đừng Như Thói Quen (Live).flac", 41_500_000, true, 9_437_184, false, 12),
+    ]
 }
 
 fn render(c: &mut Canvas, f: &mut Fonts, ic: &mut IconCache, app: &mut App, dir: &Path, name: &str) {
@@ -118,12 +144,15 @@ fn demo_library() -> Library {
 pub fn screenshots(mut fonts: Fonts, dir: &Path) {
     let _ = std::fs::create_dir_all(dir);
     let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (dl_tx, _dl_rx) = tokio::sync::mpsc::unbounded_channel();
+    // The screenshots never start anything on it, but App needs a handle.
+    let rt = tokio::runtime::Builder::new_current_thread().build().expect("tokio");
     let (local_tx, _local_rx) = std::sync::mpsc::channel();
     let paths = Paths {
         app_dir: dir.to_path_buf(),
         data_dir: dir.join("demo-data"),
     };
-    let mut app = App::new(Config::default(), paths, cmd_tx, local_tx);
+    let mut app = App::new(Config::default(), paths, cmd_tx, dl_tx, rt.handle().clone(), local_tx);
     let mut c = Canvas::new(1024, 768);
     let mut ic = IconCache::default();
     app.battery = Some(Battery {
@@ -282,11 +311,11 @@ pub fn screenshots(mut fonts: Fonts, dir: &Path) {
     }
     kb.row = 2;
     kb.col = 3;
-    app.stack.push(View::Search(kb.clone()));
+    app.stack.push(View::Search(kb.clone(), SearchTarget::Spotify));
     render(&mut c, &mut fonts, &mut ic, &mut app, dir, "06_search");
     kb.row = 0;
     kb.move_by(0, -1);
-    app.stack.push(View::Search(kb));
+    app.stack.push(View::Search(kb, SearchTarget::Spotify));
     render(&mut c, &mut fonts, &mut ic, &mut app, dir, "06b_search_clear");
     app.stack.pop();
 
@@ -350,6 +379,39 @@ pub fn screenshots(mut fonts: Fonts, dir: &Path) {
     app.conn = ConnState::Connecting;
     app.toast("Phát ngẫu nhiên");
     render(&mut c, &mut fonts, &mut ic, &mut app, dir, "14_loading");
+
+    // Downloading music from the user's own slskd server.
+    app.toast = None;
+    app.stack.truncate(1);
+    app.dls.results = demo_results();
+    app.dls.picked.insert(app.dls.results[0].filename.clone());
+    app.dls.queue = vec!["01 - Đừng Như Thói Quen.flac".into()];
+    app.dls.progress = Some((
+        "01 - Đừng Như Thói Quen.flac".into(),
+        Stage::Server,
+        21_500_000,
+        32_100_000,
+    ));
+    app.stack.push(View::Downloads(DownloadsView {
+        query: "đừng như thói quen".into(),
+        state: ListState::new(),
+    }));
+    render(&mut c, &mut fonts, &mut ic, &mut app, dir, "15_downloads");
+
+    // Receiving files from a phone over WiFi.
+    app.stack.truncate(1);
+    app.wifi = Some(wifi_transfer::preview(
+        "http://192.168.1.42:8080",
+        vec![
+            ("01 - Chúng Ta Của Hiện Tại.flac".into(), 38_400_000),
+            ("02 - Có Chắc Yêu Là Đây.flac".into(), 31_200_000),
+            ("Nếu Lúc Đó.m4a".into(), 12_800_000),
+        ],
+    ));
+    app.stack.push(View::Wifi);
+    render(&mut c, &mut fonts, &mut ic, &mut app, dir, "16_wifi");
+    app.wifi = None;
+    app.stack.truncate(1);
 
     // Rough frame-time benchmark while scrolling a long list.
     app.toast = None;
