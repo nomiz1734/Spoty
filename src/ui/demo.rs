@@ -311,6 +311,8 @@ pub fn screenshots(mut fonts: Fonts, dir: &Path) {
     }
     kb.row = 2;
     kb.col = 3;
+    // Caret moved back after "nhạc lành" with the right stick, to fix a word.
+    kb.cursor = 9;
     app.stack.push(View::Search(kb.clone(), SearchTarget::Spotify));
     render(&mut c, &mut fonts, &mut ic, &mut app, dir, "06_search");
     kb.row = 0;

@@ -734,17 +734,27 @@ fn draw_search(x: &mut Ctx, app: &mut App, kb: &mut Keyboard) {
         x.f.draw(x.c, tx, fy + 14, hint, 26.0, Weight::Regular, DIM);
     } else {
         let max_w = (fw - 64 - 84) as f32;
-        let shown = {
-            // Keep the end of long queries visible.
-            let mut s = kb.text.clone();
-            while x.f.measure(&s, 26.0, Weight::Regular) > max_w && !s.is_empty() {
-                s.remove(0);
-            }
-            s
+        let chars: Vec<char> = kb.text.chars().collect();
+        let cursor = kb.cursor.min(chars.len());
+        let width = |x: &mut Ctx, from: usize, to: usize| {
+            let s: String = chars[from..to].iter().collect();
+            x.f.measure(&s, 26.0, Weight::Regular)
         };
-        let tw = x.f.draw(x.c, tx, fy + 14, &shown, 26.0, Weight::Regular, BG) as i32;
+        // Scroll only as far as needed to keep the caret in view, then show
+        // as much of what follows as fits.
+        let mut start = 0;
+        while start < cursor && width(x, start, cursor) > max_w - 8.0 {
+            start += 1;
+        }
+        let mut end = chars.len();
+        while end > cursor && width(x, start, end) > max_w {
+            end -= 1;
+        }
+        let shown: String = chars[start..end].iter().collect();
+        x.f.draw(x.c, tx, fy + 14, &shown, 26.0, Weight::Regular, BG);
         if !kb.on_clear {
-            x.c.fill_rect(tx + tw + 3, fy + 16, 3, 32, ACCENT);
+            let cx = tx + width(x, start, cursor) as i32;
+            x.c.fill_rect(cx + 1, fy + 16, 3, 32, ACCENT);
         }
         // Clear button: reached with ▲ from the top row of keys, or SELECT.
         let (cx, cy) = ((fx + fw - 38) as f32, (fy + fh / 2) as f32);
@@ -830,6 +840,15 @@ fn draw_search(x: &mut Ctx, app: &mut App, kb: &mut Keyboard) {
             DIM,
         );
     }
+    x.f.draw_centered(
+        x.c,
+        w / 2,
+        ky + key_h + 50,
+        "Sửa chữ đã gõ: gạt cần analog phải (hoặc L2 / R2) để di chuyển con trỏ",
+        20.0,
+        Weight::Regular,
+        DIM,
+    );
     let a_label = if kb.on_clear { "Xóa hết" } else { "Nhập" };
     hints(
         x,
@@ -838,6 +857,7 @@ fn draw_search(x: &mut Ctx, app: &mut App, kb: &mut Keyboard) {
             ("B", "Xóa"),
             ("X", "Cách"),
             ("L1", "VI/EN"),
+            ("L2/R2", "Con trỏ"),
             ("SELECT", "Xóa hết"),
             ("START", "Tìm"),
         ],
@@ -881,7 +901,7 @@ fn draw_downloads(x: &mut Ctx, app: &mut App, dv: &mut DownloadsView) {
             Weight::Regular,
             SUBTEXT,
         );
-    } else if let Some(e) = app.dls.error.clone() {
+    } else if let (0, Some(e)) = (len, app.dls.error.clone()) {
         for (i, line) in x.f.wrap(&e, 20.0, Weight::Regular, (w - 120) as f32, 3).iter().enumerate() {
             x.f.draw_centered(x.c, w / 2, area.y + 70 + i as i32 * 30, line, 20.0, Weight::Regular, ERROR);
         }
@@ -891,7 +911,7 @@ fn draw_downloads(x: &mut Ctx, app: &mut App, dv: &mut DownloadsView) {
             x.c,
             w / 2,
             area.y + 106,
-            "Thử bỏ dấu, hoặc thêm tên nghệ sĩ và \"flac\"",
+            "Thử bớt từ, hoặc thêm tên nghệ sĩ",
             18.0,
             Weight::Regular,
             DIM,

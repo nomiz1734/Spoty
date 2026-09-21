@@ -1,4 +1,4 @@
-• Tải nhạc: ở nhà tự đi thẳng mạng nhà tới máy chủ (điền slskd_lan_url), ra ngoài tự chuyển sang địa chỉ công khai, kể cả khi đang tải dở
-• Tùy chọn slskd_delete_after: đặt false để giữ lại file trên máy chủ sau khi tải về máy
-• Rớt mạng khi đang tải: tự thử lại tối đa 3 lần và tải tiếp từ chỗ đang dừng
-• Báo lỗi rõ hơn khi máy chủ ở nhà tắt, mất mạng hoặc API key sai
+• Tải nhạc: sửa lỗi không bấm lên/xuống để chọn bài được trong danh sách kết quả
+• Tìm kiếm tự tìm thêm bản không dấu (nhiều file trên Soulseek đặt tên không dấu) và nới bộ lọc nguồn, nên ra nhiều kết quả hơn
+• Ô tìm kiếm có con trỏ: gạt cần analog phải (hoặc L2/R2) để quay lại sửa chữ đã gõ, gạt lên/xuống để về đầu/cuối
+• Thông báo lỗi không còn đè lên danh sách kết quả tải nhạc

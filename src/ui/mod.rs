@@ -1209,6 +1209,7 @@ impl App {
                 if id >= self.dls.id {
                     self.dls.id = id;
                     self.dls.searching = false;
+                    self.dls.error = None;
                     self.dls.results = results;
                 }
             }
@@ -1228,7 +1229,9 @@ impl App {
             E::Error(e) => {
                 self.dls.searching = false;
                 self.dls.progress = None;
-                self.dls.error = Some(e.clone());
+                // The big message is for an empty list (search failed, server
+                // down); with results on screen a toast is enough.
+                self.dls.error = self.dls.results.is_empty().then(|| e.clone());
                 self.toast(e);
             }
         }
@@ -1327,6 +1330,8 @@ impl App {
             Button::Up | Button::Down | Button::L1 | Button::R1 | Button::VolUp | Button::VolDown
         ) || (matches!(b, Button::Left | Button::Right)
             && matches!(self.stack.last(), Some(View::Search(..) | View::Feed(_))))
+            || (matches!(b, Button::RsLeft | Button::RsRight | Button::L2 | Button::R2)
+                && matches!(self.stack.last(), Some(View::Search(..))))
     }
 
     fn handle_button(&mut self, b: Button, repeat: bool, screen: &mut dyn Screen) {
@@ -1509,6 +1514,10 @@ impl App {
                     Button::Down => kb.move_by(0, 1),
                     Button::Left => kb.move_by(-1, 0),
                     Button::Right => kb.move_by(1, 0),
+                    Button::RsLeft | Button::L2 => kb.move_cursor(-1),
+                    Button::RsRight | Button::R2 => kb.move_cursor(1),
+                    Button::RsUp => kb.cursor_home(),
+                    Button::RsDown => kb.cursor_end(),
                     Button::A => {
                         if kb.press() {
                             let q = kb.text.trim().to_string();
@@ -2007,6 +2016,7 @@ impl App {
                 View::Tracks(tv) => moving |= tv.state.animate(dt),
                 View::Entries(ev) => moving |= ev.state.animate(dt),
                 View::Picker(pv) => moving |= pv.state.animate(dt),
+                View::Downloads(dv) => moving |= dv.state.animate(dt),
                 View::Feed(fs) => moving |= fs.animate(dt),
                 _ => {}
             }

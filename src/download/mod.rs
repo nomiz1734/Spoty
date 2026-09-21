@@ -108,7 +108,7 @@ pub fn spawn(
                             let (id, ui) = (search_id, ui.clone());
                             emit(&ui, DownloadEvent::Searching);
                             tokio::spawn(async move {
-                                match server.search(&text, 40).await {
+                                match server.search(&text, 60).await {
                                     Ok(results) => emit(&ui, DownloadEvent::Results { id, results }),
                                     Err(e) => emit(&ui, DownloadEvent::Error(e)),
                                 }

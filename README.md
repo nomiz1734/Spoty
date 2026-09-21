@@ -65,7 +65,7 @@ Server chỉ chạy khi màn hình này đang mở, chỉ nhận đúng các đ�
 
 ### Tải nhạc lossless (slskd)
 
-Nếu bạn tự dựng một máy chủ [slskd](https://github.com/slskd/slskd) (xem `implementation_plan.md` và `PHASE1-SETUP-GUIDE.md`), điền `slskd_url` và `slskd_api_key` vào `settings.json` rồi chọn **MENU → Tải nhạc**. Gõ tên bài (có cả bộ gõ Telex), chọn bản muốn tải, app tải về thẳng thư mục nhạc: ưu tiên nguồn còn chỗ trống và bản lossless, tải một file một lúc, rớt mạng thì tải tiếp chứ không tải lại từ đầu.
+Nếu bạn tự dựng một máy chủ [slskd](https://github.com/slskd/slskd) (xem `implementation_plan.md` và `PHASE1-SETUP-GUIDE.md`), điền `slskd_url` và `slskd_api_key` vào `settings.json` rồi chọn **MENU → Tải nhạc**. Gõ tên bài (có cả bộ gõ Telex; app tự tìm thêm bản không dấu vì nhiều file trên Soulseek đặt tên không dấu), chọn bản muốn tải, app tải về thẳng thư mục nhạc: ưu tiên nguồn còn chỗ trống và bản lossless, tải một file một lúc, rớt mạng thì tải tiếp chứ không tải lại từ đầu.
 
 Mục menu này chỉ hiện khi đã điền `slskd_url`.
 
@@ -105,7 +105,7 @@ Spotify và nhạc trên máy **dùng chung loa**: bên này phát thì bên kia
 | X | Phát ngẫu nhiên | Bật/tắt trộn bài | Dấu cách / chọn thư mục |
 | Y | Mở Đang phát | Lặp: tắt → danh sách → 1 bài | — |
 | L1 / R1 | Lên/xuống 1 trang | Tua −15s / +15s | L1: đổi bàn phím VI / EN |
-| L2 / R2 | Về đầu / cuối danh sách | — | — |
+| L2 / R2 | Về đầu / cuối danh sách | — | Di chuyển con trỏ trong ô tìm kiếm |
 | SELECT | Nhảy tới bài đang phát | — | Xóa hết / hủy |
 | START | Tùy chọn (mở album/nghệ sĩ…) | Tùy chọn | Tìm / chọn thư mục |
 | MENU | Menu: nhạc trên máy, tải nhạc, nhận nhạc qua WiFi, cập nhật, tắt màn hình, đăng xuất, **thoát** | | |
@@ -113,7 +113,7 @@ Spotify và nhạc trên máy **dùng chung loa**: bên này phát thì bên kia
 
 Ở **Dành cho bạn**: ▲▼ đổi kệ, ◀▶ chọn thẻ (L1/R1 nhảy 4 thẻ), A mở, X phát ngẫu nhiên, SELECT làm mới.
 
-**Tìm kiếm** gõ được tiếng Việt kiểu **Telex**: `s f r x j` là dấu sắc/huyền/hỏi/ngã/nặng, `z` bỏ dấu, `aa ee oo` = â ê ô, `aw ow uw` = ă ơ ư, `dd` = đ. Dấu gõ ở cuối từ cũng được (`tinhf` → tình, `dduwowngf` → đường). Gõ lặp phím để bỏ (`ff` → f). Nút **VI | EN** ở góc trái bàn phím (hoặc **L1**) chuyển sang gõ tiếng Anh cho tên bài nước ngoài; app nhớ lựa chọn này. Nút **✕** trong ô tìm kiếm xóa hết chữ: bấm ▲ từ hàng phím số để tới nút rồi bấm A, hoặc bấm SELECT. Khi ô trống, B quay lại.
+**Tìm kiếm** gõ được tiếng Việt kiểu **Telex**: `s f r x j` là dấu sắc/huyền/hỏi/ngã/nặng, `z` bỏ dấu, `aa ee oo` = â ê ô, `aw ow uw` = ă ơ ư, `dd` = đ. Dấu gõ ở cuối từ cũng được (`tinhf` → tình, `dduwowngf` → đường). Gõ lặp phím để bỏ (`ff` → f). Nút **VI | EN** ở góc trái bàn phím (hoặc **L1**) chuyển sang gõ tiếng Anh cho tên bài nước ngoài; app nhớ lựa chọn này. Muốn sửa chữ đã gõ, gạt **cần analog phải** trái/phải (hoặc **L2/R2**) để đưa con trỏ về chỗ cần sửa, rồi gõ hoặc xóa ngay tại đó — Telex cũng bỏ dấu được cho từ ngay trước con trỏ; gạt lên/xuống để về đầu/cuối. Nút **✕** trong ô tìm kiếm xóa hết chữ: bấm ▲ từ hàng phím số để tới nút rồi bấm A, hoặc bấm SELECT. Khi ô trống, B quay lại.
 
 ## Cập nhật OTA
 

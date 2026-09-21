@@ -18,6 +18,8 @@ const EV_ABS: u16 = 0x03;
 const ABS_X: u16 = 0x00;
 const ABS_Y: u16 = 0x01;
 const ABS_Z: u16 = 0x02;
+const ABS_RX: u16 = 0x03;
+const ABS_RY: u16 = 0x04;
 const ABS_RZ: u16 = 0x05;
 const ABS_HAT0X: u16 = 0x10;
 const ABS_HAT0Y: u16 = 0x11;
@@ -81,6 +83,52 @@ struct Device {
     /// Left stick ranges (min, max) for ABS_X / ABS_Y, and its current direction.
     stick_range: [Option<(i32, i32)>; 2],
     stick: [i32; 2],
+    /// Right stick: which two axes it reports on, their ranges, and its direction.
+    rstick_axes: [u16; 2],
+    rstick_range: [Option<(i32, i32)>; 2],
+    rstick: [i32; 2],
+}
+
+/// Where the right stick lives. Pads report it on RX/RY; some report it on
+/// Z/RZ instead, which otherwise carry analog triggers. A centred range
+/// (negative minimum) tells a stick from a trigger.
+fn right_stick(fd: i32) -> ([u16; 2], [Option<(i32, i32)>; 2]) {
+    if let (Some(x), Some(y)) = (abs_range(fd, ABS_RX), abs_range(fd, ABS_RY)) {
+        return ([ABS_RX, ABS_RY], [Some(x), Some(y)]);
+    }
+    let centred = |r: Option<(i32, i32)>| r.filter(|(min, _)| *min < 0);
+    if let (Some(x), Some(y)) = (centred(abs_range(fd, ABS_Z)), centred(abs_range(fd, ABS_RZ))) {
+        return ([ABS_Z, ABS_RZ], [Some(x), Some(y)]);
+    }
+    ([ABS_RX, ABS_RY], [None, None])
+}
+
+/// Direction of one stick axis (-1, 0, 1), with hysteresis so it doesn't chatter.
+fn stick_step(value: i32, (min, max): (i32, i32), old: i32) -> i32 {
+    let center = (min + max) as f32 / 2.0;
+    let half = ((max - min) as f32 / 2.0).max(1.0);
+    let norm = (value as f32 - center) / half;
+    if norm.abs() > 0.55 {
+        norm.signum() as i32
+    } else if norm.abs() < 0.35 {
+        0
+    } else {
+        old
+    }
+}
+
+/// Releases the old direction's button and presses the new one.
+fn send_dir(send: &dyn Fn(Button, bool) -> bool, old: i32, new: i32, neg: Button, pos: Button) {
+    if old < 0 {
+        send(neg, false);
+    } else if old > 0 {
+        send(pos, false);
+    }
+    if new < 0 {
+        send(neg, true);
+    } else if new > 0 {
+        send(pos, true);
+    }
 }
 
 fn has_key(fd: i32, code: u16) -> bool {
@@ -120,14 +168,20 @@ fn open_devices(cfg: &Config) -> Vec<Device> {
         if cfg.grab_power_button && has_key(fd, KEY_POWER) {
             grabbed = unsafe { libc::ioctl(fd, EVIOCGRAB as _, 1 as libc::c_int) } == 0;
         }
+        let (rstick_axes, rstick_range) = right_stick(fd);
         let mut trigger_max = HashMap::new();
         for abs in [ABS_Z, ABS_RZ] {
+            if rstick_range[0].is_some() && rstick_axes.contains(&abs) {
+                continue; // it is the right stick, not a trigger
+            }
             if let Some(max) = abs_max(fd, abs) {
                 trigger_max.insert(abs, max);
             }
         }
         let stick_range = [abs_range(fd, ABS_X), abs_range(fd, ABS_Y)];
-        log::info!("input: {path} \"{name}\" grabbed={grabbed} stick={stick_range:?}");
+        log::info!(
+            "input: {path} \"{name}\" grabbed={grabbed} stick={stick_range:?} rstick={rstick_axes:?}{rstick_range:?}"
+        );
         devices.push(Device {
             file,
             name,
@@ -137,6 +191,9 @@ fn open_devices(cfg: &Config) -> Vec<Device> {
             triggers: HashMap::new(),
             stick_range,
             stick: [0, 0],
+            rstick_axes,
+            rstick_range,
+            rstick: [0, 0],
         });
     }
     devices
@@ -236,20 +293,11 @@ fn run(cfg: Config, keymap: HashMap<u16, Button>, tx: Sender<UiMsg>) {
                         }
                     }
                     EV_ABS if code == ABS_X || code == ABS_Y => {
-                        // Left stick works like the D-pad, with hysteresis so it doesn't chatter.
+                        // Left stick works like the D-pad.
                         let axis = (code - ABS_X) as usize;
-                        let Some((min, max)) = dev.stick_range[axis] else { continue };
-                        let center = (min + max) as f32 / 2.0;
-                        let half = ((max - min) as f32 / 2.0).max(1.0);
-                        let norm = (value as f32 - center) / half;
+                        let Some(range) = dev.stick_range[axis] else { continue };
                         let old = dev.stick[axis];
-                        let new = if norm.abs() > 0.55 {
-                            norm.signum() as i32
-                        } else if norm.abs() < 0.35 {
-                            0
-                        } else {
-                            old
-                        };
+                        let new = stick_step(value, range, old);
                         if new == old {
                             continue;
                         }
@@ -259,16 +307,27 @@ fn run(cfg: Config, keymap: HashMap<u16, Button>, tx: Sender<UiMsg>) {
                         } else {
                             (Button::Up, Button::Down)
                         };
-                        if old < 0 {
-                            send(neg, false);
-                        } else if old > 0 {
-                            send(pos, false);
+                        send_dir(&send, old, new, neg, pos);
+                    }
+                    EV_ABS
+                        if dev.rstick_range[0].is_some()
+                            && (code == dev.rstick_axes[0] || code == dev.rstick_axes[1]) =>
+                    {
+                        // Right stick: its own buttons, used for the text caret.
+                        let axis = usize::from(code == dev.rstick_axes[1]);
+                        let Some(range) = dev.rstick_range[axis] else { continue };
+                        let old = dev.rstick[axis];
+                        let new = stick_step(value, range, old);
+                        if new == old {
+                            continue;
                         }
-                        if new < 0 {
-                            send(neg, true);
-                        } else if new > 0 {
-                            send(pos, true);
-                        }
+                        dev.rstick[axis] = new;
+                        let (neg, pos) = if axis == 0 {
+                            (Button::RsLeft, Button::RsRight)
+                        } else {
+                            (Button::RsUp, Button::RsDown)
+                        };
+                        send_dir(&send, old, new, neg, pos);
                     }
                     EV_ABS if code == ABS_Z || code == ABS_RZ => {
                         let max = dev.trigger_max.get(&code).copied().unwrap_or(255);

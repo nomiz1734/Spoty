@@ -102,6 +102,21 @@ fn num(v: &Value, key: &str) -> Option<u64> {
     v.get(key).and_then(|x| x.as_u64()).filter(|n| *n > 0)
 }
 
+/// "Bơi Qua Phong Ba" -> "Boi Qua Phong Ba": drops Vietnamese marks (and any
+/// other combining accents), and turns đ into d.
+pub fn fold_accents(text: &str) -> String {
+    use unicode_normalization::char::is_combining_mark;
+    use unicode_normalization::UnicodeNormalization;
+    text.nfd()
+        .filter(|c| !is_combining_mark(*c))
+        .map(|c| match c {
+            'đ' => 'd',
+            'Đ' => 'D',
+            c => c,
+        })
+        .collect()
+}
+
 /// Encodes one path segment, including any slashes inside it.
 fn segment(s: &str) -> String {
     net::encode_path(s).replace('/', "%2F")
@@ -317,21 +332,61 @@ impl Server {
     }
 
     /// Runs one search and returns the best matches.
+    ///
+    /// Soulseek matches the words of a query against file names as they are,
+    /// and Vietnamese music is shared both as "Bơi Qua Phong Ba" and as
+    /// "Boi Qua Phong Ba". So a query with marks also runs without them, and the
+    /// two result sets are merged.
     pub async fn search(&self, text: &str, limit: usize) -> Result<Vec<SearchResult>, String> {
         let text = text.trim();
         if text.is_empty() {
             return Ok(Vec::new());
         }
+        let plain = fold_accents(text);
+        let mut queries = vec![text.to_string()];
+        if plain != text {
+            queries.push(plain.clone());
+        }
+        let found = futures_util::future::join_all(queries.iter().map(|q| self.search_once(q))).await;
+        let failed = found.iter().filter(|r| r.is_err()).count();
+        let mut last_err = None;
+        let mut results = Vec::new();
+        for r in found {
+            match r {
+                Ok(v) => results.extend(v),
+                Err(e) => last_err = Some(e),
+            }
+        }
+        if failed == queries.len() {
+            return Err(last_err.unwrap_or_else(|| "tìm kiếm lỗi".into()));
+        }
+        // The same file shows up in both searches when its name has no marks.
+        let mut seen = std::collections::HashSet::new();
+        results.retain(|r| seen.insert((r.username.clone(), r.filename.clone())));
+        results.sort_by_key(|r| r.rank());
+        results.truncate(limit);
+        if queries.len() > 1 {
+            log::info!("slskd: \"{text}\" + \"{plain}\" -> {} kết quả", results.len());
+        } else {
+            log::info!("slskd: \"{text}\" -> {} kết quả", results.len());
+        }
+        Ok(results)
+    }
+
+    /// One search on the server, every result it returned.
+    async fn search_once(&self, text: &str) -> Result<Vec<SearchResult>, String> {
         // Filter on the server: a popular query can match thousands of files and
-        // the handheld would spend seconds parsing JSON it then throws away.
+        // the handheld would spend seconds parsing JSON it then throws away. No
+        // minimum peer speed: for rarer songs a slow source beats none, and the
+        // ranking already puts fast ones first.
         let body = json!({
             "searchText": text,
-            "responseLimit": 30,
-            "fileLimit": 200,
+            "responseLimit": 100,
+            "fileLimit": 500,
             "filterResponses": true,
-            "minimumPeerUploadSpeed": 100_000,
+            "minimumPeerUploadSpeed": 0,
             "minimumResponseFileCount": 1,
-            "searchTimeout": 15_000,
+            "searchTimeout": 20_000,
         });
         let (status, created) = self.call(Method::POST, "/api/v0/searches", Some(body)).await?;
         if !(200..300).contains(&status) {
@@ -343,7 +398,7 @@ impl Server {
             .ok_or("slskd không trả về mã tìm kiếm")?
             .to_string();
 
-        for _ in 0..40 {
+        for _ in 0..45 {
             tokio::time::sleep(Duration::from_secs(1)).await;
             let (_, s) = self.call(Method::GET, &format!("/api/v0/searches/{id}"), None).await?;
             let done = s.get("isComplete").and_then(|v| v.as_bool()).unwrap_or(false)
@@ -360,16 +415,15 @@ impl Server {
             .call(Method::GET, &format!("/api/v0/searches/{id}/responses"), None)
             .await?;
         let results = if (200..300).contains(&status) {
-            parse_responses(&v, limit)
+            parse_responses(&v, usize::MAX)
         } else {
             // Older builds only have the combined endpoint.
             let (_, v) = self
                 .call(Method::GET, &format!("/api/v0/searches/{id}?includeResponses=true"), None)
                 .await?;
-            parse_responses(&v, limit)
+            parse_responses(&v, usize::MAX)
         };
         let _ = self.call(Method::DELETE, &format!("/api/v0/searches/{id}"), None).await;
-        log::info!("slskd: \"{text}\" -> {} kết quả", results.len());
         Ok(results)
     }
 
@@ -598,6 +652,15 @@ mod tests {
         assert!(candidates("u", "").is_empty());
         // No traversal ever reaches the URL.
         assert!(candidates("u", "..\\..\\etc\\x.flac").iter().all(|p| !p.contains("..")));
+    }
+
+    #[test]
+    fn folds_vietnamese_marks() {
+        assert_eq!(fold_accents("bơi qua phong ba"), "boi qua phong ba");
+        assert_eq!(fold_accents("Đừng Như Thói Quen"), "Dung Nhu Thoi Quen");
+        assert_eq!(fold_accents("khi cơn mơ dần phai"), "khi con mo dan phai");
+        assert_eq!(fold_accents("Sơn Tùng M-TP"), "Son Tung M-TP");
+        assert_eq!(fold_accents("jaykii flac"), "jaykii flac", "plain text is untouched");
     }
 
     #[test]

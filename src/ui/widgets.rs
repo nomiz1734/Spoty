@@ -123,6 +123,8 @@ const MAX_CHARS: usize = 60;
 #[derive(Clone, Debug)]
 pub struct Keyboard {
     pub text: String,
+    /// Caret position in characters (not bytes); edits happen here.
+    pub cursor: usize,
     pub row: usize,
     pub col: usize,
     /// Telex input ("tinhf" -> "tình") instead of plain letters.
@@ -139,7 +141,36 @@ impl Default for Keyboard {
 
 impl Keyboard {
     pub fn new(vi: bool) -> Self {
-        Self { text: String::new(), row: 0, col: 0, vi, on_clear: false }
+        Self { text: String::new(), cursor: 0, row: 0, col: 0, vi, on_clear: false }
+    }
+
+    /// The text before and after the caret.
+    fn split(&self) -> (String, String) {
+        let at = self
+            .text
+            .char_indices()
+            .nth(self.cursor)
+            .map(|(i, _)| i)
+            .unwrap_or(self.text.len());
+        (self.text[..at].to_string(), self.text[at..].to_string())
+    }
+
+    fn len(&self) -> usize {
+        self.text.chars().count()
+    }
+
+    /// Moves the caret by `delta` characters (right stick / L2 / R2).
+    pub fn move_cursor(&mut self, delta: i32) {
+        let next = self.cursor as i32 + delta;
+        self.cursor = next.clamp(0, self.len() as i32) as usize;
+    }
+
+    pub fn cursor_home(&mut self) {
+        self.cursor = 0;
+    }
+
+    pub fn cursor_end(&mut self) {
+        self.cursor = self.len();
     }
 
     pub fn key_at(row: usize, col: usize) -> Key {
@@ -215,37 +246,52 @@ impl Keyboard {
         }
     }
 
-    /// Types one letter, through Telex in Vietnamese mode.
+    /// Types one letter at the caret, through Telex in Vietnamese mode.
+    ///
+    /// Telex works on the word just before the caret, so a mark can be added
+    /// to a word typed earlier by moving back to its end.
     pub fn type_char(&mut self, c: char) {
-        let next = if self.vi && c.is_ascii_alphabetic() {
-            super::telex::apply(&self.text, c)
+        let (before, after) = self.split();
+        let before = if self.vi && c.is_ascii_alphabetic() {
+            super::telex::apply(&before, c)
         } else {
-            let mut t = self.text.clone();
-            t.push(c);
-            t
+            format!("{before}{c}")
         };
+        let next = format!("{before}{after}");
         if next.chars().count() <= MAX_CHARS {
+            self.cursor = before.chars().count();
             self.text = next;
         }
     }
 
+    /// A space at the caret, never two in a row and never at the start.
     pub fn space(&mut self) {
-        if !self.text.ends_with(' ') && !self.text.is_empty() {
-            self.text.push(' ');
+        let (before, after) = self.split();
+        if before.is_empty() || before.ends_with(' ') || after.starts_with(' ') {
+            return;
+        }
+        if self.len() < MAX_CHARS {
+            self.text = format!("{before} {after}");
+            self.cursor += 1;
         }
     }
 
     pub fn clear(&mut self) {
         self.text.clear();
+        self.cursor = 0;
         if self.on_clear {
             self.on_clear = false;
             self.row = 0;
         }
     }
 
-    /// Removes the last character; the clear button goes away with the text.
+    /// Removes the character before the caret; the clear button goes away with the text.
     pub fn backspace(&mut self) {
-        self.text.pop();
+        let (mut before, after) = self.split();
+        if before.pop().is_some() {
+            self.cursor -= 1;
+            self.text = format!("{before}{after}");
+        }
         if self.text.is_empty() && self.on_clear {
             self.on_clear = false;
             self.row = 0;
@@ -368,5 +414,80 @@ impl FeedState {
     pub fn settle(&mut self) {
         self.y = self.ty;
         self.xs.clone_from(&self.txs);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Keyboard;
+
+    fn typed(kb: &mut Keyboard, keys: &str) {
+        for k in keys.chars() {
+            if k == ' ' {
+                kb.space();
+            } else {
+                kb.type_char(k);
+            }
+        }
+    }
+
+    #[test]
+    fn edits_happen_at_the_caret() {
+        let mut kb = Keyboard::new(false);
+        typed(&mut kb, "son tung");
+        assert_eq!(kb.cursor, 8);
+        // Back to just after "son ", then insert a word in the middle.
+        kb.move_cursor(-4);
+        typed(&mut kb, "mtp");
+        kb.space();
+        assert_eq!(kb.text, "son mtp tung");
+        assert_eq!(kb.cursor, 8);
+        // A space right before an existing one is not doubled.
+        kb.move_cursor(-1);
+        kb.space();
+        assert_eq!(kb.text, "son mtp tung");
+        // Backspace removes what is before the caret, not the end of the text.
+        kb.backspace();
+        assert_eq!(kb.text, "son mt tung");
+        kb.cursor_home();
+        kb.backspace();
+        assert_eq!(kb.text, "son mt tung", "nothing before the caret");
+        kb.cursor_end();
+        assert_eq!(kb.cursor, 11);
+        kb.move_cursor(100);
+        assert_eq!(kb.cursor, 11, "never past the end");
+    }
+
+    #[test]
+    fn telex_marks_an_earlier_word() {
+        let mut kb = Keyboard::new(true);
+        // Typed without marks, then fixed word by word from the caret.
+        typed(&mut kb, "khi con mo dan phai");
+        kb.cursor_home();
+        kb.move_cursor(7); // after "con"
+        typed(&mut kb, "w");
+        assert_eq!(kb.text, "khi cơn mo dan phai");
+        kb.move_cursor(3); // after "mo"
+        typed(&mut kb, "w");
+        kb.move_cursor(4); // after "dan"
+        typed(&mut kb, "af");
+        assert_eq!(kb.text, "khi cơn mơ dần phai");
+        // Vietnamese letters count as one character each for the caret.
+        assert_eq!(kb.cursor, "khi cơn mơ dần".chars().count());
+    }
+
+    #[test]
+    fn spaces_stay_single() {
+        let mut kb = Keyboard::new(false);
+        kb.space();
+        assert_eq!(kb.text, "", "no leading space");
+        typed(&mut kb, "ab");
+        kb.move_cursor(-1);
+        kb.space();
+        kb.space();
+        assert_eq!(kb.text, "a b");
+        kb.move_cursor(-1);
+        kb.space();
+        assert_eq!(kb.text, "a b", "no space next to a space");
     }
 }

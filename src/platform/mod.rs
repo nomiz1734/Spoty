@@ -38,6 +38,11 @@ pub enum Button {
     /// Left / right stick press.
     L3,
     R3,
+    /// Right stick pushed in a direction (moves the caret in the search field).
+    RsLeft,
+    RsRight,
+    RsUp,
+    RsDown,
 }
 
 #[cfg_attr(not(all(target_os = "linux", not(feature = "desktop"))), allow(dead_code))]
@@ -65,6 +70,10 @@ impl Button {
             "VOLDOWN" | "VOL-" => VolDown,
             "L3" => L3,
             "R3" => R3,
+            "RS_LEFT" => RsLeft,
+            "RS_RIGHT" => RsRight,
+            "RS_UP" => RsUp,
+            "RS_DOWN" => RsDown,
             _ => return None,
         })
     }
