@@ -1,3 +1,3 @@
-• Đèn LED theo nhạc: nhấn cần analog phải (R3) để đèn RGB nháy theo bài đang phát, cả Spotify lẫn nhạc trên máy. Dải đèn sau theo tiếng trầm, đèn trên theo giọng hát, đèn trước theo tiếng cao, mỗi nhịp trống đổi màu
-• Tắt đồng bộ thì đèn trở lại đúng như trước khi bật; có thêm mục bật/tắt trong MENU
-• Nhấn cần analog trái (L3) vẫn là phát/dừng
+• Đèn LED theo nhạc đúng bố cục Brick Pro: mặt sau (dải trên đỉnh và đèn cạnh nút vai) nháy giống hệt nhau theo tiếng trầm; vòng joystick theo giọng hát; hai thanh sáng mặt trước theo tiếng cao
+• App tự dò mọi vùng đèn firmware có. Thêm MENU > Kiểm tra đèn LED: bật từng vùng một để biết vùng nào là đèn nào
+• Menu dài không còn bị khuất: danh sách cuộn được, có thanh cuộn, L1/R1 nhảy 5 mục

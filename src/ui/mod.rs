@@ -114,6 +114,8 @@ pub enum View {
     Downloads(DownloadsView),
     /// "Nhận nhạc qua WiFi": the address to open on the phone.
     Wifi,
+    /// LED check: only the zone at this index is lit, to map zones to lights.
+    LedTest(usize),
     /// Local music home: all songs / albums / artists / folders / settings.
     Local(ListState),
     Entries(EntriesView),
@@ -240,6 +242,8 @@ pub enum MenuAction {
     WifiTransfer,
     /// LEDs follow the music (same as pressing the right stick).
     LedSync,
+    /// Light one LED zone at a time, to see which lights it drives.
+    LedCheck,
     Logout,
     Exit,
 }
@@ -901,6 +905,7 @@ impl App {
                 "Đèn LED theo nhạc: đang tắt (nhấn cần phải)"
             };
             items.push((label.into(), MenuAction::LedSync));
+            items.push(("Kiểm tra đèn LED".into(), MenuAction::LedCheck));
         }
         if !self.logged_out() {
             items.push(("Làm mới thư viện Spotify".into(), MenuAction::Refresh));
@@ -968,6 +973,7 @@ impl App {
             }
             MenuAction::ScreenOff => self.set_screen(screen, false),
             MenuAction::LedSync => self.toggle_led_sync(),
+            MenuAction::LedCheck => self.open_led_check(),
             MenuAction::Refresh => {
                 self.playlists = None;
                 self.send(Cmd::LoadPlaylists);
@@ -1678,6 +1684,24 @@ impl App {
                     _ => {}
                 }
             }
+            View::LedTest(k) => {
+                let n = crate::led::zone_names().len().max(1);
+                match b {
+                    Button::A | Button::Right if !repeat => {
+                        *k = (*k + 1) % n;
+                        crate::led::identify(Some(*k));
+                    }
+                    Button::Left if !repeat => {
+                        *k = (*k + n - 1) % n;
+                        crate::led::identify(Some(*k));
+                    }
+                    Button::B if !repeat => {
+                        crate::led::identify(None);
+                        self.stack.pop();
+                    }
+                    _ => {}
+                }
+            }
             View::Wifi => match b {
                 Button::B if !repeat => {
                     self.stop_wifi();
@@ -1856,6 +1880,15 @@ impl App {
         });
     }
 
+    fn open_led_check(&mut self) {
+        if crate::led::zone_names().is_empty() {
+            self.toast("Máy này không có đèn LED điều khiển được");
+            return;
+        }
+        crate::led::identify(Some(0));
+        self.stack.push(View::LedTest(0));
+    }
+
     fn global_toggle(&mut self) {
         if self.pb.track.is_none() {
             self.toast("Chưa có bài nào đang phát");
@@ -1916,6 +1949,8 @@ impl App {
         match b {
             Button::Up => menu.state.move_by(-1, len, !repeat),
             Button::Down => menu.state.move_by(1, len, !repeat),
+            Button::L1 => menu.state.move_by(-5, len, false),
+            Button::R1 => menu.state.move_by(5, len, false),
             Button::A if !repeat => {
                 let action = menu.items[menu.state.sel].1.clone();
                 if !matches!(action, MenuAction::Logout) {

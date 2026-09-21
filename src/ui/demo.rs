@@ -296,8 +296,19 @@ pub fn screenshots(mut fonts: Fonts, dir: &Path) {
     render(&mut c, &mut fonts, &mut ic, &mut app, dir, "04_now_playing");
 
     app.stack.pop();
+    // A download server makes the menu long enough to scroll.
+    app.cfg.slskd_url = "https://spoty.example".into();
     app.open_menu();
     render(&mut c, &mut fonts, &mut ic, &mut app, dir, "05_menu");
+    if let Some(m) = app.menu.as_mut() {
+        // Long menus scroll: the last item, as after pressing Up from the first.
+        let len = m.items.len();
+        m.state.set(len - 1, len);
+        m.state.scroll = m.state.target;
+        m.state.hl = (len - 1) as f32 * m.state.row_h;
+    }
+    render(&mut c, &mut fonts, &mut ic, &mut app, dir, "05b_menu_end");
+    app.cfg.slskd_url.clear();
     app.menu = None::<Menu>;
 
     app.stack.truncate(1);

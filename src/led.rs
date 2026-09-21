@@ -4,15 +4,10 @@
 //! analyzer splits it into bass / mid / treble loudness and stamps each 10 ms
 //! slice with the time it will actually be heard, after the device buffer. A
 //! thread picks those up about 30 times a second and turns them into colour
-//! and brightness on the LED zones the stock firmware exposes under
-//! /sys/class/led_anim:
-//!
-//! - back strip (`lr`) follows the bass,
-//! - top light (`m`) follows the mids,
-//! - front lights (`f1`, `f2`) follow the treble,
-//!
-//! and every drum hit moves all of them to a new colour. Whatever the LEDs were
-//! showing before is saved and put back when syncing stops.
+//! and brightness on every LED zone the stock firmware exposes under
+//! /sys/class/led_anim (see `band_for` for which zone follows what), and every
+//! drum hit moves all of them to a new colour. Whatever the LEDs were showing
+//! before is saved and put back when syncing stops.
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -99,6 +94,9 @@ struct Shared {
     enabled: AtomicBool,
     running: AtomicBool,
     available: bool,
+    zone_names: Vec<String>,
+    /// LED check in progress: only this zone is lit.
+    identify: Mutex<Option<usize>>,
     analyzer: Mutex<Analyzer>,
     slices: Mutex<VecDeque<Slice>>,
     thread: Mutex<Option<std::thread::JoinHandle<()>>>,
@@ -256,39 +254,73 @@ fn hsv(h: f32) -> [u8; 3] {
 
 // ------------------------------------------------------------------ sysfs
 
-/// One LED zone of the firmware: which band drives it and its three files.
+/// One LED zone of the firmware (`effect_<name>`, `effect_rgb_hex_<name>`).
+#[derive(Clone, Debug)]
 struct Zone {
+    name: String,
+    /// Which band drives it: 0 bass, 1 mid, 2 treble.
     band: usize,
-    effect: &'static str,
-    color: &'static str,
-    scale: &'static str,
+    /// Its brightness file, if it has one; otherwise brightness goes into the colour.
+    scale: Option<String>,
 }
 
-/// The Brick's zones. Front lights share one brightness file; the top light's
-/// brightness is the plain `max_scale`.
-const ZONES: [Zone; 4] = [
-    Zone { band: 0, effect: "effect_lr", color: "effect_rgb_hex_lr", scale: "max_scale_lr" },
-    Zone { band: 1, effect: "effect_m", color: "effect_rgb_hex_m", scale: "max_scale" },
-    Zone { band: 2, effect: "effect_f1", color: "effect_rgb_hex_f1", scale: "max_scale_f1f2" },
-    Zone { band: 2, effect: "effect_f2", color: "effect_rgb_hex_f2", scale: "max_scale_f1f2" },
-];
+/// Where each zone sits on the Brick Pro, as seen on the device:
+/// - back: the top-edge bar (`m`) and the shoulder-button lights, which are not
+///   `lr` on this model and so are any other zone (likely `l` / `r`); both pulse
+///   with the bass, as one,
+/// - front: the joystick rings (`lr`) follow the mids (vocals),
+/// - front: the two bars between the D-pad and the face buttons (`f1`, `f2`)
+///   follow the treble.
+fn band_for(zone: &str) -> usize {
+    match zone {
+        "lr" => 1,
+        "f1" | "f2" => 2,
+        _ => 0,
+    }
+}
+
+/// Shown first in the LED check: back, then front.
+const ORDER: [&str; 6] = ["m", "l", "r", "lr", "f1", "f2"];
 
 /// Writes lights to the firmware's files, skipping values that did not change.
 pub struct Leds {
     base: PathBuf,
-    zones: Vec<&'static Zone>,
+    zones: Vec<Zone>,
     max: f32,
-    saved: Vec<(&'static str, String)>,
-    last: HashMap<&'static str, String>,
+    saved: Vec<(String, String)>,
+    last: HashMap<String, String>,
     warned: bool,
 }
 
 impl Leds {
-    /// `None` when the firmware has no LED files (other devices, the PC).
+    /// Finds every zone the firmware offers. `None` when there are none
+    /// (other devices, the PC).
     pub fn open(base: &Path, max_brightness: u8) -> Option<Self> {
-        let zones: Vec<&'static Zone> = ZONES
-            .iter()
-            .filter(|z| base.join(z.effect).exists() && base.join(z.color).exists())
+        let mut names: Vec<String> = std::fs::read_dir(base)
+            .ok()?
+            .flatten()
+            .filter_map(|e| {
+                let file = e.file_name().to_string_lossy().to_string();
+                let zone = file.strip_prefix("effect_rgb_hex_")?.to_string();
+                base.join(format!("effect_{zone}")).exists().then_some(zone)
+            })
+            .collect();
+        let rank = |z: &String| ORDER.iter().position(|o| o == z).unwrap_or(ORDER.len());
+        names.sort_by(|a, b| rank(a).cmp(&rank(b)).then_with(|| a.cmp(b)));
+        let zones: Vec<Zone> = names
+            .into_iter()
+            .map(|name| {
+                let scale = match name.as_str() {
+                    "m" => "max_scale".to_string(),
+                    "f1" | "f2" => "max_scale_f1f2".to_string(),
+                    z => format!("max_scale_{z}"),
+                };
+                Zone {
+                    band: band_for(&name),
+                    scale: base.join(&scale).exists().then_some(scale),
+                    name,
+                }
+            })
             .collect();
         if zones.is_empty() {
             return None;
@@ -303,15 +335,28 @@ impl Leds {
         })
     }
 
-    pub fn zone_names(&self) -> Vec<&'static str> {
-        self.zones.iter().map(|z| z.effect.trim_start_matches("effect_")).collect()
+    pub fn zone_names(&self) -> Vec<String> {
+        self.zones.iter().map(|z| z.name.clone()).collect()
     }
 
-    fn files(&self) -> Vec<&'static str> {
-        let mut files = Vec::new();
+    /// "m: bass, max_scale" — for the log.
+    fn describe(&self) -> Vec<String> {
+        const BANDS: [&str; 3] = ["trầm", "trung", "cao"];
+        self.zones
+            .iter()
+            .map(|z| {
+                let scale = z.scale.as_deref().unwrap_or("độ sáng qua màu");
+                format!("{} → {} ({scale})", z.name, BANDS[z.band])
+            })
+            .collect()
+    }
+
+    fn files(&self) -> Vec<String> {
+        let mut files: Vec<String> = Vec::new();
         for z in &self.zones {
-            for f in [z.scale, z.color, z.effect] {
-                if !files.contains(&f) && self.base.join(f).exists() {
+            let own = [format!("effect_rgb_hex_{}", z.name), format!("effect_{}", z.name)];
+            for f in z.scale.iter().cloned().chain(own) {
+                if !files.contains(&f) {
                     files.push(f);
                 }
             }
@@ -319,13 +364,13 @@ impl Leds {
         files
     }
 
-    fn put(&mut self, file: &'static str, value: String, force: bool) {
+    fn put(&mut self, file: &str, value: String, force: bool) {
         if !force && self.last.get(file) == Some(&value) {
             return;
         }
         match std::fs::write(self.base.join(file), &value) {
             Ok(()) => {
-                self.last.insert(file, value);
+                self.last.insert(file.to_string(), value);
             }
             Err(e) if !self.warned => {
                 self.warned = true;
@@ -341,53 +386,74 @@ impl Leds {
             .files()
             .into_iter()
             .filter_map(|f| {
-                let v = std::fs::read_to_string(self.base.join(f)).ok()?;
+                let v = std::fs::read_to_string(self.base.join(&f)).ok()?;
                 Some((f, v.trim().to_string()))
             })
             .collect();
         self.last.clear();
     }
 
-    pub fn show(&mut self, lights: &[Light; 3]) {
+    /// Sets every zone to the light `light_of(index, zone)` gives it.
+    fn paint(&mut self, light_of: impl Fn(usize, &Zone) -> Light) {
         let zones = self.zones.clone();
-        for z in &zones {
-            let [r, g, b] = lights[z.band].rgb;
+        let mut scales: Vec<(String, f32)> = Vec::new();
+        for (i, z) in zones.iter().enumerate() {
+            let light = light_of(i, z);
+            let level = light.level.clamp(0.0, 1.0);
+            // No brightness file of its own: dim the colour instead.
+            let [r, g, b] = match &z.scale {
+                Some(_) => light.rgb,
+                None => light.rgb.map(|c| (c as f32 * level).round() as u8),
+            };
             let color = format!("{r:02X}{g:02X}{b:02X} ");
-            if self.last.get(z.color) != Some(&color) {
-                self.put(z.color, color, false);
+            let color_file = format!("effect_rgb_hex_{}", z.name);
+            if self.last.get(&color_file) != Some(&color) {
+                self.put(&color_file, color, false);
                 // A new colour only takes effect when the effect is set again.
-                self.put(z.effect, STATIC.to_string(), true);
+                self.put(&format!("effect_{}", z.name), STATIC.to_string(), true);
             }
-        }
-        // Zones sharing a brightness file take the brighter of the two.
-        let mut scales: Vec<(&'static str, f32)> = Vec::new();
-        for z in &zones {
-            let level = lights[z.band].level.clamp(0.0, 1.0);
-            match scales.iter_mut().find(|(f, _)| *f == z.scale) {
-                Some((_, l)) => *l = l.max(level),
-                None => scales.push((z.scale, level)),
+            if let Some(file) = &z.scale {
+                // Zones sharing a brightness file take the brighter of the two.
+                match scales.iter_mut().find(|(f, _)| f == file) {
+                    Some((_, l)) => *l = l.max(level),
+                    None => scales.push((file.clone(), level)),
+                }
             }
         }
         for (file, level) in scales {
-            if self.base.join(file).exists() {
-                let value = ((level * self.max).round() as u32).to_string();
-                self.put(file, value, false);
-            }
+            let value = ((level * self.max).round() as u32).to_string();
+            self.put(&file, value, false);
         }
+    }
+
+    pub fn show(&mut self, lights: &[Light; 3]) {
+        self.paint(|_, z| lights[z.band]);
+    }
+
+    /// Only zone `k` lit, in white: tells which physical LEDs a zone drives.
+    pub fn identify(&mut self, k: usize) {
+        self.paint(|i, _| {
+            if i == k {
+                Light { rgb: [255, 255, 255], level: 1.0 }
+            } else {
+                Light { rgb: [0, 0, 0], level: 0.0 }
+            }
+        });
     }
 
     /// Puts back what `begin` saved: brightness and colours first, then the
     /// effects, which make the firmware pick the rest up.
     pub fn restore(&mut self) {
         let saved = std::mem::take(&mut self.saved);
-        let (effects, rest): (Vec<_>, Vec<_>) =
-            saved.into_iter().partition(|(f, _)| f.starts_with("effect_") && !f.starts_with("effect_rgb"));
+        let (effects, rest): (Vec<_>, Vec<_>) = saved
+            .into_iter()
+            .partition(|(f, _)| f.starts_with("effect_") && !f.starts_with("effect_rgb"));
         for (file, value) in rest {
             let value = if file.starts_with("effect_rgb_hex") { format!("{value} ") } else { value };
-            self.put(file, value, true);
+            self.put(&file, value, true);
         }
         for (file, value) in effects {
-            self.put(file, value, true);
+            self.put(&file, value, true);
         }
         self.last.clear();
     }
@@ -402,6 +468,8 @@ pub fn start(cfg: &Config) {
         enabled: AtomicBool::new(false),
         running: AtomicBool::new(true),
         available: leds.is_some(),
+        zone_names: leds.as_ref().map(|l| l.zone_names()).unwrap_or_default(),
+        identify: Mutex::new(None),
         analyzer: Mutex::new(Analyzer::new(44_100)),
         slices: Mutex::new(VecDeque::new()),
         thread: Mutex::new(None),
@@ -410,7 +478,12 @@ pub fn start(cfg: &Config) {
         log::info!("led: không có {SYSFS}, tắt tính năng đèn theo nhạc");
         return;
     };
-    log::info!("led: vùng đèn {:?}", leds.zone_names());
+    let mut files: Vec<String> = std::fs::read_dir(SYSFS)
+        .map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect())
+        .unwrap_or_default();
+    files.sort();
+    log::info!("led: file trong {SYSFS}: {}", files.join(" "));
+    log::info!("led: vùng đèn: {}", leds.describe().join(", "));
     let handle = std::thread::Builder::new()
         .name("led".into())
         .spawn(move || run(leds))
@@ -429,7 +502,8 @@ fn run(mut leds: Leds) {
         let now = Instant::now();
         let dt = (now - prev).as_secs_f32().min(0.2);
         prev = now;
-        let want = sh.enabled.load(Ordering::Relaxed);
+        let checking = *sh.identify.lock().unwrap();
+        let want = sh.enabled.load(Ordering::Relaxed) || checking.is_some();
         if want != on {
             on = want;
             if on {
@@ -441,6 +515,10 @@ fn run(mut leds: Leds) {
             sh.slices.lock().unwrap().clear();
         }
         if !on {
+            continue;
+        }
+        if let Some(k) = checking {
+            leds.identify(k);
             continue;
         }
         // The loudest audio that became audible since the last tick.
@@ -472,6 +550,18 @@ pub fn set_enabled(on: bool) {
 
 pub fn available() -> bool {
     SHARED.get().is_some_and(|s| s.available)
+}
+
+/// The zones this device has, in the order the LED check shows them.
+pub fn zone_names() -> Vec<String> {
+    SHARED.get().map(|s| s.zone_names.clone()).unwrap_or_default()
+}
+
+/// LED check: light only zone `k` (by `zone_names` index), or None to stop.
+pub fn identify(k: Option<usize>) {
+    if let Some(sh) = SHARED.get() {
+        *sh.identify.lock().unwrap() = k;
+    }
 }
 
 /// Puts the LEDs back as they were and stops the thread (on exit).
@@ -507,9 +597,14 @@ pub fn selftest() {
         println!("Không thấy vùng LED nào quen thuộc (lr, m, f1, f2).");
         return;
     };
-    println!("== Vùng LED dùng được: {:?} ==", leds.zone_names());
+    println!("== Vùng LED: {} ==", leds.describe().join(", "));
     leds.begin();
     let pause = |s: f32| std::thread::sleep(Duration::from_secs_f32(s));
+    for (k, name) in leds.zone_names().iter().enumerate() {
+        println!("0.{}. Chỉ vùng '{name}' sáng TRẮNG — ghi lại đèn nào đang sáng", k + 1);
+        leds.identify(k);
+        pause(2.5);
+    }
     for (i, (name, rgb)) in [("ĐỎ", [255, 0, 0]), ("XANH LÁ", [0, 255, 0]), ("XANH DƯƠNG", [0, 0, 255])]
         .into_iter()
         .enumerate()
@@ -523,7 +618,7 @@ pub fn selftest() {
         leds.show(&[Light { rgb: [255, 255, 255], level: i as f32 / 30.0 }; 3]);
         pause(0.1);
     }
-    println!("5. Mô phỏng nhạc 8 giây: dải sau nháy theo nhịp trống (2 nhịp/giây), mỗi nhịp đổi màu");
+    println!("5. Mô phỏng nhạc 8 giây: hai dải mặt sau nháy giống hệt nhau theo nhịp trống (2 nhịp/giây), mỗi nhịp đổi màu");
     let mut engine = Engine::new();
     for i in 0..240 {
         let t = i as f32 * 0.033;
@@ -602,39 +697,80 @@ mod tests {
         assert_eq!(hsv(360.0 + 60.0), [255, 255, 0]);
     }
 
-    #[test]
-    fn writes_the_firmware_files_and_puts_them_back() {
-        let dir = std::env::temp_dir().join(format!("spoty-led-{}", std::process::id()));
+    fn fake_leds(files: &[(&str, &str)]) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "spoty-led-{}-{}",
+            std::process::id(),
+            files.len()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let before = [
-            ("effect_lr", "2"),
-            ("effect_rgb_hex_lr", "FF8000"),
-            ("max_scale_lr", "60"),
-            ("effect_m", "0"),
-            ("effect_rgb_hex_m", "FFFFFF"),
-            ("max_scale", "30"),
-        ];
-        for (f, v) in before {
+        for (f, v) in files {
             std::fs::write(dir.join(f), v).unwrap();
         }
-        // Only the zones whose files exist are used: here lr and m.
+        dir
+    }
+
+    /// The Brick Pro's zones as seen on the device, plus the shoulder lights
+    /// on a zone of their own (`l`) with no brightness file.
+    const BRICK_PRO: [(&str, &str); 11] = [
+        ("effect_m", "0"),
+        ("effect_rgb_hex_m", "00FFFF"),
+        ("max_scale", "30"),
+        ("effect_lr", "2"),
+        ("effect_rgb_hex_lr", "FF8000"),
+        ("max_scale_lr", "60"),
+        ("effect_f1", "4"),
+        ("effect_rgb_hex_f1", "FF00FF"),
+        ("max_scale_f1f2", "50"),
+        ("effect_l", "4"),
+        ("effect_rgb_hex_l", "80C0FF"),
+    ];
+
+    #[test]
+    fn back_strips_pulse_together_and_are_put_back() {
+        let dir = fake_leds(&BRICK_PRO);
         let mut leds = Leds::open(&dir, 80).unwrap();
-        assert_eq!(leds.zone_names(), vec!["lr", "m"]);
+        // Found by scanning, back first: top bar, shoulder, then the front.
+        assert_eq!(leds.zone_names(), vec!["m", "l", "lr", "f1"]);
         leds.begin();
-        let red = Light { rgb: [255, 0, 0], level: 0.5 };
-        let blue = Light { rgb: [0, 0, 255], level: 1.0 };
-        leds.show(&[red, blue, blue]);
+        let bass = Light { rgb: [255, 0, 0], level: 0.5 };
+        let mid = Light { rgb: [0, 255, 0], level: 1.0 };
+        let treble = Light { rgb: [0, 0, 255], level: 0.25 };
+        leds.show(&[bass, mid, treble]);
         let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap();
-        assert_eq!(read("effect_rgb_hex_lr"), "FF0000 ", "firmware wants a trailing space");
-        assert_eq!(read("effect_lr"), "4", "static effect re-armed for the new colour");
-        assert_eq!(read("max_scale_lr"), "40", "half of max brightness 80");
-        assert_eq!(read("effect_rgb_hex_m"), "0000FF ");
-        assert_eq!(read("max_scale"), "80");
+        // Back: top bar and shoulder lights both follow the bass.
+        assert_eq!(read("effect_rgb_hex_m"), "FF0000 ", "firmware wants a trailing space");
+        assert_eq!(read("effect_m"), "4", "static effect re-armed for the new colour");
+        assert_eq!(read("max_scale"), "40", "half of max brightness 80");
+        assert_eq!(read("effect_rgb_hex_l"), "800000 ", "no brightness file: the colour is dimmed");
+        assert_eq!(read("effect_l"), "4");
+        // Front: joystick rings follow the mids, the F bars the treble.
+        assert_eq!(read("effect_rgb_hex_lr"), "00FF00 ");
+        assert_eq!(read("max_scale_lr"), "80");
+        assert_eq!(read("effect_rgb_hex_f1"), "0000FF ");
+        assert_eq!(read("max_scale_f1f2"), "20");
         leds.restore();
-        for (f, v) in before {
+        for (f, v) in BRICK_PRO {
             assert_eq!(read(f).trim(), v, "{f} restored");
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn led_check_lights_one_zone_at_a_time() {
+        let dir = fake_leds(&BRICK_PRO[..9]);
+        let mut leds = Leds::open(&dir, 80).unwrap();
+        assert_eq!(leds.zone_names(), vec!["m", "lr", "f1"]);
+        leds.begin();
+        leds.identify(1);
+        let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap();
+        assert_eq!(read("effect_rgb_hex_lr"), "FFFFFF ");
+        assert_eq!(read("max_scale_lr"), "80");
+        assert_eq!(read("effect_rgb_hex_m"), "000000 ");
+        assert_eq!(read("max_scale"), "0");
+        assert_eq!(read("max_scale_f1f2"), "0");
+        leds.restore();
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

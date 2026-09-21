@@ -98,12 +98,14 @@ Spotify và nhạc trên máy **dùng chung loa**: bên này phát thì bên kia
 
 **Nhấn cần analog phải** (R3) ở bất kỳ màn hình nào (hoặc **MENU → Đèn LED theo nhạc**) để đèn RGB của máy nháy theo bài đang phát, cả Spotify lẫn nhạc trên máy:
 
-- **dải đèn sau** sáng theo tiếng trầm (trống, bass),
-- **đèn trên** theo tiếng trung (giọng hát, nhạc cụ),
-- **hai đèn trước** theo tiếng cao (hi-hat, cymbal),
+- **mặt sau**: dải trên đỉnh máy và đèn cạnh các nút L1/L2/R1/R2 nháy giống hệt nhau theo tiếng trầm (trống, bass),
+- **vòng sáng quanh hai joystick** theo tiếng trung (giọng hát, nhạc cụ),
+- **hai thanh sáng giữa D-pad và nút ABXY** theo tiếng cao (hi-hat, cymbal),
 - mỗi nhịp trống đổi sang màu mới.
 
 Đèn được canh theo độ trễ của bộ đệm âm thanh nên nháy đúng lúc tai nghe thấy, và tự tối đi khi dừng nhạc. Nhấn cần phải lần nữa để tắt: đèn trở lại đúng như trước khi bật. App nhớ lựa chọn này cho lần mở sau. Độ sáng tối đa chỉnh bằng `led_brightness`.
+
+**MENU → Kiểm tra đèn LED** bật lần lượt từng vùng đèn của firmware (màu trắng, tên vùng hiện trên màn hình) để biết vùng nào ứng với đèn nào trên máy. App tự dò mọi vùng firmware có, nên vẫn chạy nếu bản firmware sau thêm vùng mới.
 
 ## Điều khiển
 

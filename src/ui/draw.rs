@@ -34,6 +34,7 @@ pub fn frame(c: &mut Canvas, f: &mut Fonts, ic: &mut IconCache, app: &mut App) {
             View::Search(kb, _) => draw_search(&mut x, app, kb),
             View::Downloads(dv) => draw_downloads(&mut x, app, dv),
             View::Wifi => draw_wifi(&mut x, app),
+            View::LedTest(k) => draw_led_test(&mut x, app, *k),
             View::Local(state) => draw_local_home(&mut x, app, state),
             View::Feed(fs) => draw_feed(&mut x, app, fs),
             View::Entries(ev) => draw_entries(&mut x, app, ev),
@@ -993,6 +994,53 @@ fn draw_downloads(x: &mut Ctx, app: &mut App, dv: &mut DownloadsView) {
     );
 }
 
+/// LED check: names the one zone that is lit, so the user can say which lights it is.
+fn draw_led_test(x: &mut Ctx, app: &mut App, k: usize) {
+    let w = x.c.w as i32;
+    let cx = w / 2;
+    let area = content_rect(x, app);
+    let names = crate::led::zone_names();
+    let name = names.get(k).cloned().unwrap_or_default();
+    x.f.draw_centered(
+        x.c,
+        cx,
+        area.y + 36,
+        "Chỉ vùng này đang sáng TRẮNG, mọi đèn khác tắt",
+        22.0,
+        Weight::Regular,
+        SUBTEXT,
+    );
+    let box_w = 520;
+    x.c.fill_rounded(cx - box_w / 2, area.y + 84, box_w, 120, 18, ELEVATED);
+    let title = format!("Vùng  {name}");
+    x.f.draw_centered(x.c, cx, area.y + 112, &title, 52.0, Weight::Bold, ACCENT);
+    let count = format!("{} / {}", k + 1, names.len().max(1));
+    x.f.draw_centered(x.c, cx, area.y + 226, &count, 22.0, Weight::Regular, DIM);
+    x.f.draw_centered(
+        x.c,
+        cx,
+        area.y + 290,
+        "Xem cả mặt trước lẫn mặt sau máy: đèn nào đang sáng?",
+        21.0,
+        Weight::Regular,
+        TEXT,
+    );
+    x.f.draw_centered(
+        x.c,
+        cx,
+        area.y + 326,
+        "Ghi lại tên vùng và vị trí đèn, rồi bấm A để sang vùng tiếp",
+        20.0,
+        Weight::Regular,
+        SUBTEXT,
+    );
+    top_bar(x, app, "Kiểm tra đèn LED", true);
+    if show_mini(app) {
+        mini_player(x, app);
+    }
+    hints(x, &[("A", "Vùng tiếp"), ("LR", "Chuyển vùng"), ("B", "Thoát")]);
+}
+
 /// "Nhận nhạc qua WiFi": the address to type on the phone, and what arrived.
 fn draw_wifi(x: &mut Ctx, app: &mut App) {
     let w = x.c.w as i32;
@@ -1079,17 +1127,34 @@ fn draw_menu(x: &mut Ctx, app: &mut App) {
     let h = x.c.h as i32;
     let row_h = 62;
     let pw = 680;
-    let ph = 92 + menu.items.len() as i32 * row_h + 20;
+    let (head, foot, margin) = (80, 20, 24);
+    let len = menu.items.len();
+    // As many rows as fit on screen; the rest scroll with the selection.
+    let fit = ((h - 2 * margin - head - foot) / row_h).max(1) as usize;
+    let rows = len.min(fit) as i32;
+    let ph = head + rows * row_h + foot;
     let px = (w - pw) / 2;
-    let py = ((h - ph) / 2).max(20);
+    let py = ((h - ph) / 2).max(margin);
     x.c.fill_rounded(px, py, pw, ph, 18, ELEVATED);
     x.f.draw(x.c, px + 32, py + 24, "Tùy chọn", 28.0, Weight::Bold, TEXT);
-    let area = Rect::new(px, py + 80, pw, menu.items.len() as i32 * row_h);
-    menu.state.set_geometry(row_h as f32, area.h as f32, menu.items.len());
-    let hy = area.y + menu.state.hl.round() as i32;
+    let area = Rect::new(px, py + head, pw, rows * row_h);
+    menu.state.set_geometry(row_h as f32, area.h as f32, len);
+    let y0 = area.y - menu.state.scroll.round() as i32;
+    x.c.set_clip(area);
+    let hy = y0 + menu.state.hl.round() as i32;
     x.c.fill_rounded(px + 14, hy + 3, pw - 28, row_h - 6, 10, HIGHLIGHT);
-    for (i, (label, action)) in menu.items.iter().enumerate() {
-        let ry = area.y + i as i32 * row_h;
+    if len > fit {
+        // Scrollbar: where the visible rows sit in the whole list.
+        let track = area.h - 12;
+        let thumb = (track as f32 * fit as f32 / len as f32).max(30.0) as i32;
+        let max_scroll = (len as f32 * row_h as f32 - area.h as f32).max(1.0);
+        let t = (menu.state.scroll / max_scroll).clamp(0.0, 1.0);
+        let by = area.y + 6 + ((track - thumb) as f32 * t) as i32;
+        x.c.fill_rounded(px + pw - 12, by, 4, thumb, 2, DIM);
+    }
+    for i in menu.state.visible(len) {
+        let (label, action) = &menu.items[i];
+        let ry = y0 + i as i32 * row_h;
         let (text, col) = match action {
             super::MenuAction::Logout if menu.confirm_logout => {
                 ("Nhấn A lần nữa để đăng xuất".to_string(), ERROR)
@@ -1099,6 +1164,7 @@ fn draw_menu(x: &mut Ctx, app: &mut App) {
         };
         x.f.draw_fit(x.c, px + 34, ry + 16, pw - 68, &text, 23.0, Weight::Regular, col);
     }
+    x.c.reset_clip();
 }
 
 fn draw_toast(x: &mut Ctx, msg: &str) {
