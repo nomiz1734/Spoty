@@ -109,6 +109,10 @@ pub struct Config {
     pub slskd_lan_url: String,
     /// Delete the file on the server once the device has it (false keeps it there).
     pub slskd_delete_after: bool,
+    /// RGB LEDs follow the music (toggled by pressing the right stick, R3).
+    pub led_sync: bool,
+    /// Brightest the LEDs get while syncing, 0-100.
+    pub led_brightness: u8,
 }
 
 impl Default for Config {
@@ -141,6 +145,8 @@ impl Default for Config {
             slskd_api_key: String::new(),
             slskd_lan_url: String::new(),
             slskd_delete_after: true,
+            led_sync: false,
+            led_brightness: 80,
         }
     }
 }

@@ -266,12 +266,20 @@ impl AudioOut for AlsaOut {
     }
 
     fn write(&mut self, buf: OutBuf) -> Result<(), String> {
-        let Some((pcm, _)) = self.pcm.as_mut() else {
+        let delay_ms = self.latency_us / 1000;
+        let Some((pcm, spec)) = self.pcm.as_mut() else {
             return Err("thiết bị âm thanh chưa mở".into());
         };
+        let rate = spec.rate;
         let r = match buf {
-            OutBuf::S16(s) => pcm.write_bytes(as_bytes(s)),
-            OutBuf::S32(s) => pcm.write_bytes(as_bytes(s)),
+            OutBuf::S16(s) => {
+                crate::led::feed_i16(s, rate, delay_ms);
+                pcm.write_bytes(as_bytes(s))
+            }
+            OutBuf::S32(s) => {
+                crate::led::feed_i32(s, rate, delay_ms);
+                pcm.write_bytes(as_bytes(s))
+            }
         };
         if r.is_err() {
             self.pcm = None;
@@ -365,6 +373,7 @@ impl Sink for AlsaSink {
             return Err(SinkError::OnWrite("raw audio packets are not supported".into()));
         };
         self.open()?;
+        crate::led::feed_f64(&samples, 44_100, self.latency_us / 1000);
         let Some((pcm, spec)) = self.pcm.as_mut() else {
             return Err(SinkError::NotConnected("no pcm".into()));
         };

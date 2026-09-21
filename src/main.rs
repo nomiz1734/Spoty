@@ -4,6 +4,7 @@ mod audio;
 mod config;
 mod download;
 mod gfx;
+mod led;
 mod local;
 mod logger;
 mod net;
@@ -66,6 +67,11 @@ fn main() {
         rt.block_on(download::download_selftest(&cfg, &query));
         return;
     }
+    if args.iter().any(|a| a == "--led-test") {
+        // Shows what the LED firmware offers and runs a visible colour test.
+        led::selftest();
+        return;
+    }
     if let Some(i) = args.iter().position(|a| a == "--update-check") {
         // Fetches a manifest the way the app does (HTTPS + redirects) and reports.
         let url = args.get(i + 1).cloned().unwrap_or_default();
@@ -115,6 +121,7 @@ fn main() {
     let fonts = gfx::Fonts::load(&paths.fonts_dir());
     let (tx, rx) = std::sync::mpsc::channel();
     platform::start_input(&cfg, tx.clone());
+    led::start(&cfg);
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -127,6 +134,7 @@ fn main() {
 
     let exit = ui::run(screen, fonts, rx, tx, cmd, dl, rt.handle().clone(), cfg, paths.clone());
 
+    led::shutdown();
     rt.shutdown_timeout(Duration::from_secs(1));
     log::logger().flush();
     if exit == ui::Exit::Restart {

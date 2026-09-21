@@ -1,4 +1,3 @@
-• Tải nhạc: sửa lỗi không bấm lên/xuống để chọn bài được trong danh sách kết quả
-• Tìm kiếm tự tìm thêm bản không dấu (nhiều file trên Soulseek đặt tên không dấu) và nới bộ lọc nguồn, nên ra nhiều kết quả hơn
-• Ô tìm kiếm có con trỏ: gạt cần analog phải (hoặc L2/R2) để quay lại sửa chữ đã gõ, gạt lên/xuống để về đầu/cuối
-• Thông báo lỗi không còn đè lên danh sách kết quả tải nhạc
+• Đèn LED theo nhạc: nhấn cần analog phải (R3) để đèn RGB nháy theo bài đang phát, cả Spotify lẫn nhạc trên máy. Dải đèn sau theo tiếng trầm, đèn trên theo giọng hát, đèn trước theo tiếng cao, mỗi nhịp trống đổi màu
+• Tắt đồng bộ thì đèn trở lại đúng như trước khi bật; có thêm mục bật/tắt trong MENU
+• Nhấn cần analog trái (L3) vẫn là phát/dừng

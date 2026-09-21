@@ -94,12 +94,24 @@ Mẹo để nghe đúng chất lượng gốc: để âm lượng Spoty ở 100%
 
 Spotify và nhạc trên máy **dùng chung loa**: bên này phát thì bên kia tự tạm dừng.
 
+## Đèn LED theo nhạc
+
+**Nhấn cần analog phải** (R3) ở bất kỳ màn hình nào (hoặc **MENU → Đèn LED theo nhạc**) để đèn RGB của máy nháy theo bài đang phát, cả Spotify lẫn nhạc trên máy:
+
+- **dải đèn sau** sáng theo tiếng trầm (trống, bass),
+- **đèn trên** theo tiếng trung (giọng hát, nhạc cụ),
+- **hai đèn trước** theo tiếng cao (hi-hat, cymbal),
+- mỗi nhịp trống đổi sang màu mới.
+
+Đèn được canh theo độ trễ của bộ đệm âm thanh nên nháy đúng lúc tai nghe thấy, và tự tối đi khi dừng nhạc. Nhấn cần phải lần nữa để tắt: đèn trở lại đúng như trước khi bật. App nhớ lựa chọn này cho lần mở sau. Độ sáng tối đa chỉnh bằng `led_brightness`.
+
 ## Điều khiển
 
 | Nút | Danh sách | Đang phát | Tìm kiếm / Chọn thư mục |
 |---|---|---|---|
 | D-pad / joystick trái | Di chuyển (giữ để cuộn nhanh) | ◀▶ bài trước/sau, ▲▼ âm lượng | Di chuyển |
 | Nhấn joystick (L3) | Phát / Dừng (ở mọi màn hình) | Phát / Dừng | Phát / Dừng |
+| Nhấn cần analog phải (R3) | Bật/tắt **đèn LED theo nhạc** (ở mọi màn hình) | Bật/tắt đèn LED theo nhạc | Bật/tắt đèn LED theo nhạc |
 | A | Mở / phát bài | Phát / Dừng | Gõ phím / vào thư mục |
 | B | Quay lại | Quay lại | Xóa ký tự / lên thư mục cha |
 | X | Phát ngẫu nhiên | Bật/tắt trộn bài | Dấu cách / chọn thư mục |
@@ -152,6 +164,8 @@ File này được tạo ở lần chạy đầu tiên, và tự thêm các khó
 | `slskd_url` | `""` | Máy chủ slskd riêng để tải nhạc, ví dụ `https://nhac.duckdns.org` (`""` = tắt). Đang thử nghiệm, chưa có giao diện |
 | `slskd_api_key` | `""` | API key của máy chủ đó (gửi qua `X-Api-Key`, bắt buộc HTTPS) |
 | `slskd_lan_url` | `""` | Địa chỉ của cùng máy chủ trong mạng nhà, ví dụ `http://192.168.1.230:5080`. Ở nhà Spoty đi thẳng đường này, ra ngoài tự chuyển về `slskd_url`. `http://` chỉ được phép với địa chỉ trong mạng nhà |
+| `led_sync` | `false` | Đèn LED nháy theo nhạc (bật/tắt bằng nhấn cần analog phải) |
+| `led_brightness` | `80` | Độ sáng tối đa của đèn khi nháy theo nhạc, 0–100 |
 | `slskd_delete_after` | `true` | Xóa file trên máy chủ sau khi máy đã tải về. `false` để giữ lại (ví dụ làm thư viện trên NAS) |
 | `device_name` | `"TrimUI Brick Pro"` | Tên hiện trong danh sách Spotify Connect |
 | `bitrate` | `320` | Chất lượng Spotify: 96 / 160 / 320 kbps |
@@ -178,6 +192,7 @@ File này được tạo ở lần chạy đầu tiên, và tự thêm các khó
   - `./spoty --home-test`: tải trang Dành cho bạn bằng tài khoản đã lưu và in các kệ.
   - `./spoty --slskd-test <từ khóa>`: tìm nhạc trên máy chủ slskd và in kết quả đã xếp hạng.
   - `./spoty --slskd-get <từ khóa>`: tải bản tốt nhất về thư mục nhạc, in tiến trình cả hai chặng.
+  - `./spoty --led-test`: liệt kê điều khiển LED của firmware, rồi chạy thử đỏ / xanh lá / xanh dương, sáng dần và mô phỏng nhạc.
 - **Không thấy máy trong danh sách thiết bị trên điện thoại:** kiểm tra hai máy cùng Wi-Fi. Router có thể đang chặn mDNS giữa các thiết bị (chế độ "AP isolation" hoặc mạng khách).
 - **Nút bấm bị lệch:** chạy với `SPOTY_LOG=debug` để thấy mã phím chưa được gán, rồi thêm vào `keymap`.
 - **Không có tiếng / tiếng rè:** thử `"audio_output_format": "s16"`, `"audio_device": "hw:0,0"`, hoặc tăng `audio_latency_ms`.

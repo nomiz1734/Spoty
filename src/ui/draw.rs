@@ -704,6 +704,7 @@ fn draw_now_playing(x: &mut Ctx, app: &mut App) {
             ("UD", "Âm lượng"),
             ("X", "Trộn"),
             ("Y", "Lặp"),
+            ("R3", "Đèn LED"),
             ("B", "Về"),
         ],
     );

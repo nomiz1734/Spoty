@@ -238,6 +238,8 @@ pub enum MenuAction {
     Downloads,
     /// Receive files from a phone over the local network.
     WifiTransfer,
+    /// LEDs follow the music (same as pressing the right stick).
+    LedSync,
     Logout,
     Exit,
 }
@@ -892,6 +894,14 @@ impl App {
             items.push(("Chuyển nhạc Spotify về máy này".into(), MenuAction::Transfer));
         }
         items.push(("Tắt màn hình (nhạc vẫn phát)".into(), MenuAction::ScreenOff));
+        if crate::led::available() {
+            let label = if self.cfg.led_sync {
+                "Đèn LED theo nhạc: đang bật (nhấn cần phải)"
+            } else {
+                "Đèn LED theo nhạc: đang tắt (nhấn cần phải)"
+            };
+            items.push((label.into(), MenuAction::LedSync));
+        }
         if !self.logged_out() {
             items.push(("Làm mới thư viện Spotify".into(), MenuAction::Refresh));
         }
@@ -957,6 +967,7 @@ impl App {
                 self.toast("Đang chuyển nhạc về máy này…");
             }
             MenuAction::ScreenOff => self.set_screen(screen, false),
+            MenuAction::LedSync => self.toggle_led_sync(),
             MenuAction::Refresh => {
                 self.playlists = None;
                 self.send(Cmd::LoadPlaylists);
@@ -1372,9 +1383,15 @@ impl App {
         if self.menu.is_some() {
             return self.handle_menu_button(b, repeat, screen);
         }
-        if matches!(b, Button::L3 | Button::R3) {
+        if b == Button::L3 {
             if !repeat {
                 self.global_toggle();
+            }
+            return;
+        }
+        if b == Button::R3 {
+            if !repeat {
+                self.toggle_led_sync();
             }
             return;
         }
@@ -1823,6 +1840,22 @@ impl App {
     }
 
     /// Play/pause from any screen (joystick press).
+    /// Right stick press (R3) anywhere, or the menu: LEDs follow the music, or go back to normal.
+    fn toggle_led_sync(&mut self) {
+        if !crate::led::available() {
+            self.toast("Máy này không có đèn LED điều khiển được");
+            return;
+        }
+        self.cfg.led_sync = !self.cfg.led_sync;
+        self.cfg.save(&self.paths);
+        crate::led::set_enabled(self.cfg.led_sync);
+        self.toast(if self.cfg.led_sync {
+            "Đèn LED theo nhạc: bật"
+        } else {
+            "Đèn LED theo nhạc: tắt"
+        });
+    }
+
     fn global_toggle(&mut self) {
         if self.pb.track.is_none() {
             self.toast("Chưa có bài nào đang phát");

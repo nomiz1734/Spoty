@@ -1,7 +1,8 @@
 //! Desktop window for developing the UI on a PC.
 //! Keys: arrows = D-pad, Z = A, X = B, A = Y, S = X, Q/W = L1/R1, 1/2 = L2/R2,
 //! Enter = Start, Right Shift = Select, Esc = Menu, P = Power, +/- = volume,
-//! [ ] = right stick left/right, Home/End = right stick up/down.
+//! C/V = left/right stick press, [ ] = right stick left/right,
+//! Home/End = right stick up/down.
 
 use std::sync::mpsc::Sender;
 
@@ -51,6 +52,7 @@ fn map_key(k: Key) -> Option<Button> {
         Key::Escape => Button::Menu,
         Key::P => Button::Power,
         Key::C => Button::L3,
+        Key::V => Button::R3,
         Key::LeftBracket => Button::RsLeft,
         Key::RightBracket => Button::RsRight,
         Key::Home => Button::RsUp,
