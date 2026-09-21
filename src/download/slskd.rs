@@ -12,6 +12,7 @@
 //! whole search.
 
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use hyper::Method;
@@ -179,32 +180,91 @@ pub fn parse_responses(v: &Value, limit: usize) -> Vec<SearchResult> {
 /// One slskd server, addressed through nginx.
 #[derive(Clone)]
 pub struct Server {
-    base: String,
+    /// Reachable from anywhere, e.g. through a Cloudflare Tunnel. Always https.
+    public: String,
+    /// The same server on the home network, tried first when set.
+    lan: Option<String>,
     key: String,
+    /// Whether the LAN address answered, and when that was checked.
+    lan_state: Arc<Mutex<Option<(bool, Instant)>>>,
 }
+
+/// How long a LAN check is trusted before asking again.
+const LAN_OK_FOR: Duration = Duration::from_secs(60);
+const LAN_DOWN_FOR: Duration = Duration::from_secs(20);
+/// At home the NAS answers in milliseconds; away, give up quickly.
+const LAN_PROBE: Duration = Duration::from_millis(1500);
 
 impl Server {
     /// `None` until both the URL and the API key are set in settings.json.
     ///
-    /// Plain `http://` is refused: the API key travels on every request.
-    pub fn new(url: &str, key: &str) -> Option<Self> {
-        let base = url.trim().trim_end_matches('/').to_string();
+    /// The public URL must be `https://`: the API key travels on every request.
+    /// The LAN URL may be plain `http://`, but only to a private address.
+    pub fn new(url: &str, key: &str, lan_url: &str) -> Option<Self> {
+        let public = url.trim().trim_end_matches('/').to_string();
         let key = key.trim().to_string();
-        if base.is_empty() || key.is_empty() {
+        if public.is_empty() || key.is_empty() {
             return None;
         }
-        if !base.starts_with("https://") {
-            log::warn!("slskd_url phải bắt đầu bằng https:// (đang là {base})");
+        if !public.starts_with("https://") {
+            log::warn!("slskd_url phải bắt đầu bằng https:// (đang là {public})");
             return None;
         }
-        Some(Self { base, key })
+        let lan = lan_url.trim().trim_end_matches('/').to_string();
+        let lan = if lan.is_empty() {
+            None
+        } else if net::allowed(&lan) {
+            Some(lan)
+        } else {
+            log::warn!("bỏ qua slskd_lan_url {lan}: chỉ dùng https, hoặc http tới địa chỉ trong mạng nhà");
+            None
+        };
+        Some(Self { public, lan, key, lan_state: Arc::new(Mutex::new(None)) })
     }
 
     fn headers(&self) -> Vec<(&'static str, String)> {
         vec![
             ("x-api-key", self.key.clone()),
             ("accept", "application/json".to_string()),
+            // Cloudflare's bot checks challenge requests that carry no user agent.
+            ("user-agent", format!("Spoty/{}", env!("CARGO_PKG_VERSION"))),
         ]
+    }
+
+    /// The address to use right now: the LAN one if it answers, else the public one.
+    async fn base(&self) -> (String, bool) {
+        let Some(lan) = self.lan.clone() else {
+            return (self.public.clone(), false);
+        };
+        let cached = *self.lan_state.lock().unwrap();
+        if let Some((ok, at)) = cached {
+            let ttl = if ok { LAN_OK_FOR } else { LAN_DOWN_FOR };
+            if at.elapsed() < ttl {
+                return if ok { (lan, true) } else { (self.public.clone(), false) };
+            }
+        }
+        // An authenticated request, not just a TCP connect: another network
+        // can have a different machine at the same private address.
+        let probe = format!("{lan}/api/v0/searches");
+        let ok = matches!(
+            net::fetch(Method::GET, &probe, &self.headers(), None, LAN_PROBE).await,
+            Ok((200, _))
+        );
+        let was = cached.map(|(ok, _)| ok);
+        if was != Some(ok) {
+            log::info!("slskd: {}", if ok { "dùng đường LAN" } else { "dùng đường tunnel" });
+        }
+        *self.lan_state.lock().unwrap() = Some((ok, Instant::now()));
+        if ok {
+            (lan, true)
+        } else {
+            (self.public.clone(), false)
+        }
+    }
+
+    /// Forgets that the LAN answered, after a request over it failed.
+    fn lan_failed(&self) {
+        *self.lan_state.lock().unwrap() = Some((false, Instant::now()));
     }
 
     async fn call(&self, method: Method, path: &str, body: Option<Value>) -> Result<(u16, Value), String> {
@@ -213,10 +273,21 @@ impl Server {
             headers.push(("content-type", "application/json".to_string()));
             serde_json::to_vec(&b).unwrap_or_default()
         });
-        let url = format!("{}{path}", self.base);
-        let (status, bytes) = net::fetch(method, &url, &headers, payload, net::CALL_TIMEOUT).await?;
-        if status == 401 || status == 403 {
-            return Err("API key bị từ chối".into());
+        let (base, on_lan) = self.base().await;
+        let url = format!("{base}{path}");
+        let result = net::fetch(method.clone(), &url, &headers, payload.clone(), net::CALL_TIMEOUT).await;
+        let (status, bytes) = match result {
+            Ok(r) => r,
+            // Walked out of the house mid-way: try once more through the tunnel.
+            Err(_) if on_lan => {
+                self.lan_failed();
+                let url = format!("{}{path}", self.public);
+                net::fetch(method, &url, &headers, payload, net::CALL_TIMEOUT).await?
+            }
+            Err(e) => return Err(e),
+        };
+        if status == 401 || status == 403 || (502..=504).contains(&status) || (520..=530).contains(&status) {
+            return Err(net::status_message(status));
         }
         let value = if bytes.is_empty() {
             Value::Null
@@ -226,13 +297,22 @@ impl Server {
         Ok((status, value))
     }
 
+    /// Which way requests go right now, for the self-test.
+    pub async fn route(&self) -> &'static str {
+        if self.base().await.1 {
+            "LAN"
+        } else {
+            "tunnel"
+        }
+    }
+
     /// Checks the server answers and the key works, for the settings screen.
     pub async fn ping(&self) -> Result<(), String> {
         let (status, _) = self.call(Method::GET, "/api/v0/transfers/downloads", None).await?;
         if (200..300).contains(&status) {
             Ok(())
         } else {
-            Err(format!("máy chủ trả lỗi HTTP {status}"))
+            Err(net::status_message(status))
         }
     }
 
@@ -355,9 +435,10 @@ impl Server {
         if candidates.is_empty() {
             return Err("tên file rỗng".into());
         }
+        let (base, _) = self.base().await;
         let mut tried = Vec::new();
         for path in candidates {
-            let url = format!("{}/files/{}", self.base, net::encode_path(&path));
+            let url = format!("{base}/files/{}", net::encode_path(&path));
             let (status, _) =
                 net::fetch(Method::HEAD, &url, &self.headers(), None, net::CALL_TIMEOUT).await?;
             if (200..300).contains(&status) {
@@ -378,8 +459,15 @@ impl Server {
         resume_from: u64,
         progress: impl FnMut(u64, u64) -> bool,
     ) -> Result<u64, String> {
-        let url = format!("{}/files/{}", self.base, net::encode_path(remote));
-        net::get_to_file(&url, &self.headers(), dest, resume_from, progress).await
+        let (base, on_lan) = self.base().await;
+        let url = format!("{base}/files/{}", net::encode_path(remote));
+        let result = net::get_to_file(&url, &self.headers(), dest, resume_from, progress).await;
+        if result.is_err() && on_lan {
+            // The caller retries from where the file stopped; that attempt
+            // goes through the tunnel.
+            self.lan_failed();
+        }
+        result
     }
 
     /// Frees the copy on the server; the disk there is small. Best effort.
@@ -474,11 +562,22 @@ mod tests {
 
     #[test]
     fn refuses_plain_http_and_blanks() {
-        assert!(Server::new("https://music.example", "k").is_some());
-        assert!(Server::new("https://music.example/", "k").is_some());
-        assert!(Server::new("http://music.example", "k").is_none(), "API key phải đi qua TLS");
-        assert!(Server::new("", "k").is_none());
-        assert!(Server::new("https://music.example", "  ").is_none());
+        assert!(Server::new("https://music.example", "k", "").is_some());
+        assert!(Server::new("https://music.example/", "k", "").is_some());
+        assert!(Server::new("http://music.example", "k", "").is_none(), "API key phải đi qua TLS");
+        assert!(Server::new("", "k", "").is_none());
+        assert!(Server::new("https://music.example", "  ", "").is_none());
+    }
+
+    #[test]
+    fn lan_url_only_inside_the_house() {
+        let lan = |url: &str| Server::new("https://spoty.nomiz.homes", "k", url).unwrap().lan;
+        assert_eq!(lan("http://192.168.1.230:5080/").as_deref(), Some("http://192.168.1.230:5080"));
+        assert_eq!(lan("https://nas.nomiz.homes:8443").as_deref(), Some("https://nas.nomiz.homes:8443"));
+        assert_eq!(lan(""), None);
+        // Plain http to a public address would leak the key: ignored, tunnel only.
+        assert_eq!(lan("http://113.23.61.13:5080"), None);
+        assert_eq!(lan("http://nas.nomiz.homes:5080"), None);
     }
 
     #[test]

@@ -151,6 +151,8 @@ File này được tạo ở lần chạy đầu tiên, và tự thêm các khó
 | `search_keyboard` | `"vi"` | Bàn phím tìm kiếm: `vi` (Telex) hoặc `en` |
 | `slskd_url` | `""` | Máy chủ slskd riêng để tải nhạc, ví dụ `https://nhac.duckdns.org` (`""` = tắt). Đang thử nghiệm, chưa có giao diện |
 | `slskd_api_key` | `""` | API key của máy chủ đó (gửi qua `X-Api-Key`, bắt buộc HTTPS) |
+| `slskd_lan_url` | `""` | Địa chỉ của cùng máy chủ trong mạng nhà, ví dụ `http://192.168.1.230:5080`. Ở nhà Spoty đi thẳng đường này, ra ngoài tự chuyển về `slskd_url`. `http://` chỉ được phép với địa chỉ trong mạng nhà |
+| `slskd_delete_after` | `true` | Xóa file trên máy chủ sau khi máy đã tải về. `false` để giữ lại (ví dụ làm thư viện trên NAS) |
 | `device_name` | `"TrimUI Brick Pro"` | Tên hiện trong danh sách Spotify Connect |
 | `bitrate` | `320` | Chất lượng Spotify: 96 / 160 / 320 kbps |
 | `initial_volume` | `70` | Âm lượng Spotify lần đầu (%) |

@@ -27,6 +27,14 @@ pub use slskd::{SearchResult, Server};
 const MAX_NAME: usize = 120;
 /// Refuse to start a download unless this much room is left afterwards.
 const KEEP_FREE: u64 = 64 * 1024 * 1024;
+/// Attempts at pulling a file off the server; later ones resume where the
+/// previous one stopped (and fall back from the LAN to the tunnel).
+const DOWNLOAD_TRIES: u32 = 3;
+
+/// The configured server, if `slskd_url` and `slskd_api_key` are set.
+pub fn server_from(cfg: &Config) -> Option<Server> {
+    Server::new(&cfg.slskd_url, &cfg.slskd_api_key, &cfg.slskd_lan_url)
+}
 
 pub enum DownloadCmd {
     Search(String),
@@ -75,7 +83,8 @@ pub fn spawn(
     ui: Sender<UiMsg>,
 ) -> UnboundedSender<DownloadCmd> {
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let server = Server::new(&cfg.slskd_url, &cfg.slskd_api_key);
+    let server = server_from(cfg);
+    let delete_after = cfg.slskd_delete_after;
     let mut dir = PathBuf::from(&cfg.music_dir);
     rt.spawn(async move {
         let (done_tx, mut done_rx) = mpsc::unbounded_channel::<()>();
@@ -135,7 +144,7 @@ pub fn spawn(
                     let (ui, dir, cancel, done) =
                         (ui.clone(), dir.clone(), cancel.clone(), done_tx.clone());
                     tokio::spawn(async move {
-                        match fetch_one(&server, &item, &dir, &ui, &cancel).await {
+                        match fetch_one(&server, &item, &dir, &ui, &cancel, delete_after).await {
                             Ok(path) => emit(&ui, DownloadEvent::Complete(path)),
                             Err(e) => emit(&ui, DownloadEvent::Error(e)),
                         }
@@ -182,6 +191,7 @@ async fn fetch_one(
     dir: &Path,
     ui: &Sender<UiMsg>,
     cancel: &AtomicBool,
+    delete_after: bool,
 ) -> Result<PathBuf, String> {
     let name = safe_name(&item.filename).ok_or("tên file không hợp lệ")?;
     if let Some(free) = free_space(dir) {
@@ -203,19 +213,35 @@ async fn fetch_one(
     let remote = server.locate(item).await?;
     let dest = unique_path(dir, &name);
     let part = with_suffix(&dest, ".part");
-    let resume = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
-    {
-        let mut report = reporter(ui, &name, Stage::Server);
-        server
+    // A .part left by an earlier run may belong to another version of the
+    // song; only resume what this job itself started.
+    let _ = std::fs::remove_file(&part);
+    let mut report = reporter(ui, &name, Stage::Server);
+    for attempt in 1..=DOWNLOAD_TRIES {
+        let resume = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+        let result = server
             .download(&remote, &part, resume, |done, total| {
                 report(done, total);
                 !cancel.load(Ordering::Relaxed)
             })
-            .await?;
+            .await;
+        match result {
+            Ok(_) => break,
+            Err(e) if cancel.load(Ordering::Relaxed) || attempt == DOWNLOAD_TRIES => {
+                let _ = std::fs::remove_file(&part);
+                return Err(e);
+            }
+            Err(e) => {
+                log::warn!("tải {name} lỗi lần {attempt}: {e}; thử lại");
+                tokio::time::sleep(std::time::Duration::from_secs(2 * attempt as u64)).await;
+            }
+        }
     }
     // Rename only once the file is whole, so a rescan never picks up a stub.
     std::fs::rename(&part, &dest).map_err(|e| format!("không lưu được file: {e}"))?;
-    server.delete_remote(&remote).await;
+    if delete_after {
+        server.delete_remote(&remote).await;
+    }
     Ok(dest)
 }
 
@@ -294,12 +320,12 @@ pub fn free_space(_dir: &Path) -> Option<u64> {
 
 /// `spoty --slskd-test <từ khóa>`: searches and prints what the UI would list.
 pub async fn search_selftest(cfg: &Config, query: &str) {
-    let Some(server) = Server::new(&cfg.slskd_url, &cfg.slskd_api_key) else {
+    let Some(server) = server_from(cfg) else {
         println!("{NOT_SET_UP}");
         return;
     };
     match server.ping().await {
-        Ok(()) => println!("máy chủ ok: {}", cfg.slskd_url),
+        Ok(()) => println!("máy chủ ok: {} (đi đường {})", cfg.slskd_url, server.route().await),
         Err(e) => {
             println!("không kết nối được: {e}");
             return;
@@ -329,7 +355,7 @@ pub async fn search_selftest(cfg: &Config, query: &str) {
 /// `spoty --slskd-get <từ khóa>`: downloads the best match into the music
 /// folder, through the same worker and queue the app uses.
 pub async fn download_selftest(cfg: &Config, query: &str) {
-    if Server::new(&cfg.slskd_url, &cfg.slskd_api_key).is_none() {
+    if server_from(cfg).is_none() {
         println!("{NOT_SET_UP}");
         return;
     }
@@ -429,5 +455,163 @@ mod tests {
         let second = unique_path(&dir, "Bài.flac");
         assert_eq!(second.file_name().unwrap(), "Bài (1).flac");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A stand-in for slskd behind nginx, answering just what Spoty asks for.
+    mod fake_slskd {
+        use std::sync::{Arc, Mutex};
+
+        use bytes::Bytes;
+        use http_body_util::Full;
+        use hyper::body::Incoming;
+        use hyper::server::conn::http1;
+        use hyper::service::service_fn;
+        use hyper::{Method, Request, Response};
+        use hyper_util::rt::TokioIo;
+
+        pub const KEY: &str = "k";
+        pub const BODY: &[u8] = b"fLaC-this-is-not-really-audio-but-the-bytes-must-match";
+        const REMOTE: &str = r"@@b\Nhạc\Album\01 - Bài.flac";
+        /// Where slskd put it: the peer's last folder, then the file.
+        const SERVED: &str = "/files/Album/01%20-%20B%C3%A0i.flac";
+
+        #[derive(Default)]
+        pub struct Seen {
+            pub deletes: Vec<String>,
+            pub user_agents: Vec<String>,
+        }
+
+        fn reply(status: u16, body: impl Into<Bytes>) -> Response<Full<Bytes>> {
+            Response::builder()
+                .status(status)
+                .body(Full::new(body.into()))
+                .unwrap()
+        }
+
+        async fn route(req: Request<Incoming>, seen: Arc<Mutex<Seen>>) -> Result<Response<Full<Bytes>>, std::convert::Infallible> {
+            let ua = req.headers().get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+            seen.lock().unwrap().user_agents.push(ua);
+            if req.headers().get("x-api-key").and_then(|v| v.to_str().ok()) != Some(KEY) {
+                return Ok(reply(403, ""));
+            }
+            let path = req.uri().path().to_string();
+            let file = format!(
+                r#"{{"filename":{},"size":{},"state":"Completed, Succeeded","bytesTransferred":{}}}"#,
+                serde_json::to_string(REMOTE).unwrap(),
+                BODY.len(),
+                BODY.len()
+            );
+            Ok(match (req.method().clone(), path.as_str()) {
+                (Method::GET, "/api/v0/searches") => reply(200, "[]"),
+                (Method::POST, "/api/v0/searches") => reply(200, r#"{"id":"s1"}"#),
+                (Method::GET, "/api/v0/searches/s1") => reply(200, r#"{"isComplete":true}"#),
+                (Method::GET, "/api/v0/searches/s1/responses") => reply(
+                    200,
+                    format!(
+                        r#"[{{"username":"fast","uploadSpeed":3000000,"hasFreeUploadSlot":true,"queueLength":0,"files":[{file}]}}]"#
+                    ),
+                ),
+                (Method::DELETE, "/api/v0/searches/s1") => reply(204, ""),
+                (Method::POST, "/api/v0/transfers/downloads/fast") => reply(201, ""),
+                (Method::GET, "/api/v0/transfers/downloads") => reply(
+                    200,
+                    format!(r#"[{{"username":"fast","directories":[{{"directory":"Album","files":[{file}]}}]}}]"#),
+                ),
+                (Method::HEAD, p) if p == SERVED => reply(200, ""),
+                (Method::GET, p) if p == SERVED => reply(200, BODY),
+                (Method::DELETE, p) if p.starts_with("/api/v0/files/downloads/") => {
+                    seen.lock().unwrap().deletes.push(p.to_string());
+                    reply(204, "")
+                }
+                _ => reply(404, ""),
+            })
+        }
+
+        /// Starts the fake on a free port of this machine; returns its URL.
+        pub async fn start(seen: Arc<Mutex<Seen>>) -> String {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            tokio::spawn(async move {
+                loop {
+                    let Ok((stream, _)) = listener.accept().await else { continue };
+                    let seen = seen.clone();
+                    tokio::spawn(async move {
+                        let service = service_fn(move |req| route(req, seen.clone()));
+                        let _ = http1::Builder::new().serve_connection(TokioIo::new(stream), service).await;
+                    });
+                }
+            });
+            format!("http://127.0.0.1:{port}")
+        }
+    }
+
+    /// The whole trip over the LAN address: search, enqueue, wait, find the
+    /// file on the server, pull it down, then delete it there — or keep it.
+    #[test]
+    fn downloads_over_the_lan_and_keeps_or_deletes() {
+        use std::sync::{Arc, Mutex};
+
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let dir = std::env::temp_dir().join(format!("spoty-e2e-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let seen = Arc::new(Mutex::new(fake_slskd::Seen::default()));
+
+        rt.block_on(async {
+            let lan = fake_slskd::start(seen.clone()).await;
+            // The public address is unreachable on purpose: everything must go over the LAN.
+            let server = Server::new("https://spoty.invalid", fake_slskd::KEY, &lan).unwrap();
+            assert_eq!(server.route().await, "LAN");
+
+            let results = server.search("bài", 10).await.unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].base_name(), "01 - Bài.flac");
+
+            let (ui, _events) = std::sync::mpsc::channel();
+            let cancel = AtomicBool::new(false);
+
+            // Default: delete the copy on the server once the device has it.
+            let path = fetch_one(&server, &results[0], &dir, &ui, &cancel, true).await.unwrap();
+            assert_eq!(path.file_name().unwrap(), "01 - Bài.flac");
+            assert_eq!(std::fs::read(&path).unwrap(), fake_slskd::BODY);
+            assert_eq!(seen.lock().unwrap().deletes.len(), 1);
+
+            // slskd_delete_after = false: the NAS keeps its copy.
+            let path = fetch_one(&server, &results[0], &dir, &ui, &cancel, false).await.unwrap();
+            assert_eq!(path.file_name().unwrap(), "01 - Bài (1).flac");
+            assert_eq!(std::fs::read(&path).unwrap(), fake_slskd::BODY);
+            assert_eq!(seen.lock().unwrap().deletes.len(), 1, "không được xóa trên NAS");
+        });
+
+        // No .part left behind, and every request said who it was.
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".part"))
+            .collect();
+        assert!(leftovers.is_empty());
+        assert!(seen.lock().unwrap().user_agents.iter().all(|ua| ua.starts_with("Spoty/")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Wrong key: a clear message, not a raw status code.
+    #[test]
+    fn wrong_key_says_so() {
+        use std::sync::{Arc, Mutex};
+
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            let lan = fake_slskd::start(Arc::new(Mutex::new(fake_slskd::Seen::default()))).await;
+            // With a wrong key the LAN probe fails, so this also proves the
+            // fallback: the request goes to the (unreachable) public address.
+            let server = Server::new("https://spoty.invalid", "sai", &lan).unwrap();
+            assert_eq!(server.route().await, "tunnel");
+            let err = server.search("bài", 10).await.unwrap_err();
+            assert!(err.contains("mạng") || err.contains("không trả lời"), "{err}");
+        });
     }
 }

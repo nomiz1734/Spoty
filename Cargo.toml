@@ -1,6 +1,6 @@
 [package]
 name = "spoty"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 description = "Spotify client for TrimUI Brick / Brick Pro (stock OS)"
 license = "MIT"

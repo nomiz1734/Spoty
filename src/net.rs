@@ -4,8 +4,13 @@
 //! downloader that can resume with a `Range` header. Every request is bounded
 //! by a timeout: hyper has none of its own, and a server that accepts the
 //! connection then goes quiet would otherwise hang the screen for ever.
+//!
+//! Everything goes over HTTPS, with one exception: plain `http://` to a
+//! private address on the home network (or this machine), so the music server
+//! on the NAS can be reached directly when the device is at home.
 
 use std::io::{Seek, SeekFrom, Write};
+use std::net::Ipv4Addr;
 use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -30,7 +35,9 @@ fn client() -> &'static Client<Https, Full<Bytes>> {
     CLIENT.get_or_init(|| {
         let https = hyper_rustls::HttpsConnectorBuilder::new()
             .with_webpki_roots()
-            .https_only()
+            // The scheme is policed per request by `allowed`, which lets
+            // plain http through only for addresses on the home network.
+            .https_or_http()
             .enable_http1()
             .build();
         Client::builder(TokioExecutor::new()).build(https)
@@ -55,6 +62,44 @@ pub fn resolve(base: &str, reference: &str) -> String {
         None => base,
     };
     format!("{dir}{reference}")
+}
+
+/// Whether a URL may be fetched: any `https://`, or `http://` to a private
+/// IPv4 address (10/8, 172.16/12, 192.168/16) or this machine.
+pub fn allowed(url: &str) -> bool {
+    if url.starts_with("https://") {
+        return true;
+    }
+    let Some(rest) = url.strip_prefix("http://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = authority.rsplit_once(':').map(|(h, _)| h).unwrap_or(authority);
+    host.parse::<Ipv4Addr>()
+        .map(|ip| ip.is_private() || ip.is_loopback())
+        .unwrap_or(false)
+}
+
+fn check(url: &str) -> Result<(), String> {
+    if allowed(url) {
+        Ok(())
+    } else {
+        Err("chỉ cho phép https (http chỉ dùng với địa chỉ trong mạng nhà)".into())
+    }
+}
+
+/// A plain-language message for an HTTP error status.
+///
+/// Cloudflare answers 502-504 and 520-530 itself when the tunnel or the NAS
+/// behind it is down; saying so beats a bare number.
+pub fn status_message(code: u16) -> String {
+    match code {
+        401 | 403 => format!("máy chủ từ chối, kiểm tra API key (HTTP {code})"),
+        502..=504 | 520..=530 => {
+            format!("máy chủ ở nhà không phản hồi: NAS tắt, mất mạng hoặc tunnel chưa chạy (HTTP {code})")
+        }
+        _ => format!("máy chủ trả lỗi HTTP {code}"),
+    }
 }
 
 /// Percent-encodes a path so names with spaces or Vietnamese letters survive.
@@ -98,6 +143,7 @@ pub async fn fetch(
 ) -> Result<(u16, Bytes), String> {
     let mut url = url.to_string();
     for _ in 0..6 {
+        check(&url)?;
         let req = build(&method, &url, headers, body.as_deref())?;
         let resp = tokio::time::timeout(timeout, client().request(req))
             .await
@@ -139,6 +185,7 @@ pub async fn get_to_file(
         headers.push(("range", format!("bytes={resume_from}-")));
     }
     let resp = loop {
+        check(&url)?;
         let req = build(&Method::GET, &url, &headers, None)?;
         let resp = tokio::time::timeout(CALL_TIMEOUT, client().request(req))
             .await
@@ -157,7 +204,7 @@ pub async fn get_to_file(
     };
     let status = resp.status();
     if !status.is_success() {
-        return Err(format!("máy chủ trả lỗi HTTP {}", status.as_u16()));
+        return Err(status_message(status.as_u16()));
     }
     // 206 means the server honoured the Range; 200 means it sent the whole file
     // again, so start over from the beginning.
@@ -210,7 +257,31 @@ pub async fn get_to_file(
 
 #[cfg(test)]
 mod tests {
-    use super::{encode_path, resolve};
+    use super::{allowed, encode_path, resolve, status_message};
+
+    #[test]
+    fn plain_http_only_at_home() {
+        assert!(allowed("https://spoty.nomiz.homes/api"));
+        assert!(allowed("http://192.168.1.230:5080/api/v0/searches"));
+        assert!(allowed("http://10.0.0.5/x"));
+        assert!(allowed("http://172.20.1.2:8080"));
+        assert!(allowed("http://127.0.0.1:5080"));
+        // The API key must never cross the internet in the clear.
+        assert!(!allowed("http://spoty.nomiz.homes/api"));
+        assert!(!allowed("http://113.23.61.13:5080/api"));
+        assert!(!allowed("http://172.32.0.1/"));
+        assert!(!allowed("http://192.168.1.230.evil.com/"));
+        assert!(!allowed("ftp://192.168.1.230/"));
+        assert!(!allowed(""));
+    }
+
+    #[test]
+    fn explains_gateway_errors() {
+        assert!(status_message(530).contains("không phản hồi"));
+        assert!(status_message(502).contains("không phản hồi"));
+        assert!(status_message(403).contains("API key"));
+        assert_eq!(status_message(500), "máy chủ trả lỗi HTTP 500");
+    }
 
     #[test]
     fn relative_urls() {

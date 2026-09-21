@@ -104,6 +104,11 @@ pub struct Config {
     pub slskd_url: String,
     /// API key for that server (sent as X-Api-Key).
     pub slskd_api_key: String,
+    /// The same server on the home network, used when it answers, e.g.
+    /// "http://192.168.1.230:5080" ("" = always go through slskd_url).
+    pub slskd_lan_url: String,
+    /// Delete the file on the server once the device has it (false keeps it there).
+    pub slskd_delete_after: bool,
 }
 
 impl Default for Config {
@@ -134,6 +139,8 @@ impl Default for Config {
             search_keyboard: "vi".into(),
             slskd_url: String::new(),
             slskd_api_key: String::new(),
+            slskd_lan_url: String::new(),
+            slskd_delete_after: true,
         }
     }
 }
