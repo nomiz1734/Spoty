@@ -391,9 +391,6 @@ pub struct App {
     go_background: bool,
     /// Since when nothing has played in the background.
     bg_idle: Option<Instant>,
-    /// What lies under the menu or a dialog, already dimmed, and when (second
-    /// and dimming) it was drawn: while the menu scrolls only the menu is redrawn.
-    pub backdrop: Option<(Vec<u32>, u64)>,
 }
 
 fn percent_to_u16(p: u8) -> u16 {
@@ -473,7 +470,6 @@ impl App {
             holders: Vec::new(),
             go_background: false,
             bg_idle: None,
-            backdrop: None,
             cfg,
             paths,
         }
@@ -1051,7 +1047,6 @@ impl App {
         self.bg_idle = None;
         // Decoded covers come back from the SD card cache; a game may want the memory.
         self.images = ImageStore::default();
-        self.backdrop = None;
         log::info!("background: screen handed back to the system, music keeps playing");
     }
 
@@ -2282,10 +2277,6 @@ pub fn run(
             pending.push(m);
         }
         for m in pending {
-            if !matches!(m, UiMsg::Input(..)) {
-                // Something besides a key press changed: the backdrop may be stale.
-                app.backdrop = None;
-            }
             match m {
                 // Buttons belong to the system while Spoty is in the background.
                 UiMsg::Input(..) if !app.foreground => {}

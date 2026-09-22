@@ -18,47 +18,13 @@ struct Ctx<'a> {
 pub fn frame(c: &mut Canvas, f: &mut Fonts, ic: &mut IconCache, app: &mut App) {
     let mut x = Ctx { c, f, ic };
     x.c.reset_clip();
-    // Under the menu or a dialog the screen only changes about once a second
-    // (clock, progress bar), so it is drawn and dimmed once per second and
-    // reused while the menu scrolls: a third of the work per frame.
-    let overlay = app.menu.is_some() || app.update.dialog;
-    let dim = if app.menu.is_some() { 160 } else { 170 };
-    let second = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    // Also keyed on the dimming, which differs between the menu and a dialog.
-    let stamp = second << 8 | dim as u64;
-    let reuse = overlay
-        && app
-            .backdrop
-            .as_ref()
-            .is_some_and(|(px, at)| *at == stamp && px.len() == x.c.px.len());
-    if reuse {
-        if let Some((px, _)) = app.backdrop.as_ref() {
-            x.c.px.copy_from_slice(px);
-        }
-    } else {
-        draw_screen(&mut x, app);
-        if overlay {
-            let full = x.c.full();
-            x.c.dim(full, dim);
-            let mut px = app.backdrop.take().map(|(px, _)| px).unwrap_or_default();
-            px.clear();
-            px.extend_from_slice(&x.c.px);
-            app.backdrop = Some((px, stamp));
-        } else {
-            app.backdrop = None;
-        }
-    }
+    // Every frame is drawn in full, overlays included: the same work each
+    // time, so animations keep an even pace.
+    draw_screen(&mut x, app);
     if app.menu.is_some() {
         draw_menu(&mut x, app);
     }
     if app.update.dialog {
-        if app.menu.is_some() {
-            let full = x.c.full();
-            x.c.dim(full, 170);
-        }
         draw_update(&mut x, app);
     }
     if let Some((msg, _)) = app.toast.clone() {
@@ -1158,8 +1124,9 @@ fn draw_wifi(x: &mut Ctx, app: &mut App) {
     hints(x, &[("B", "Tắt và quay lại"), ("Y", "Đang phát")]);
 }
 
-/// The menu panel; `frame` has already dimmed the screen under it.
 fn draw_menu(x: &mut Ctx, app: &mut App) {
+    let full = x.c.full();
+    x.c.dim(full, 160);
     let Some(menu) = app.menu.as_mut() else {
         return;
     };
@@ -1443,9 +1410,10 @@ fn update_button(x: &mut Ctx, bx: i32, by: i32, key: &str, label: &str, strong: 
     bw + 14
 }
 
-/// The update dialog; `frame` has already dimmed the screen under it.
 fn draw_update(x: &mut Ctx, app: &mut App) {
     use crate::update::UpdateState;
+    let full = x.c.full();
+    x.c.dim(full, 170);
     let w = x.c.w as i32;
     let h = x.c.h as i32;
     let pw = 720;

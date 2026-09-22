@@ -1,5 +1,1 @@
-• MENU > Chạy nền: về menu máy mà nhạc vẫn phát tiếp, điều khiển được từ app Spotify trên điện thoại; mở lại Spoty là quay về đúng màn hình cũ
-• Chạy nền quá 30 phút không phát gì thì tự thoát để máy được ngủ (đổi bằng background_quit_after_min)
-• Cuộn menu và hộp thoại cập nhật mượt hơn (nhẹ hơn khoảng 3-4 lần mỗi khung hình)
-• Đỡ tốn pin: bớt vẽ thừa khi đang phát và khi quét thư viện, luồng đèn LED ngủ sâu hơn khi tắt đồng bộ
-• Vùng đèn các nút L1/L2/R1/R2 được gọi đúng tên "rear" như firmware Brick Pro
+• Menu và hộp thoại cập nhật chuyển động đều tay trở lại: mỗi khung hình vẽ lại đầy đủ như bản 0.5.1, không còn khung nặng xen giữa các khung nhẹ
