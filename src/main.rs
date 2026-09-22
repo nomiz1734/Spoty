@@ -1,6 +1,7 @@
 //! Spoty — a Spotify client for the TrimUI Brick / Brick Pro.
 
 mod audio;
+mod background;
 mod config;
 mod download;
 mod gfx;
@@ -24,6 +25,10 @@ fn arg_value(args: &[String], flag: &str) -> Option<PathBuf> {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--attach") {
+        // launch.sh, standing in for the app in the system launcher.
+        std::process::exit(background::attach(args.iter().any(|a| a == "--wait")));
+    }
     let paths = config::Paths::detect();
 
     // Developer helpers: render every screen to PNG, or write the launcher icon.
@@ -111,7 +116,13 @@ fn main() {
     );
     let cfg = config::Config::load(&paths);
 
-    let screen = match platform::open_screen(&cfg) {
+    #[cfg(unix)]
+    if std::env::var_os("SPOTY_DETACH").is_some() {
+        // Started by launch.sh to outlive it: keep playing after the launcher
+        // takes the screen back, whatever it does to its own process group.
+        unsafe { libc::setsid() };
+    }
+    let screen = match platform::Display::open(&cfg) {
         Ok(s) => s,
         Err(e) => {
             log::error!("display: {e}");
@@ -120,6 +131,8 @@ fn main() {
     };
     let fonts = gfx::Fonts::load(&paths.fonts_dir());
     let (tx, rx) = std::sync::mpsc::channel();
+    // Launchers asking to put Spoty back on screen (see background.rs).
+    background::listen(tx.clone());
     platform::start_input(&cfg, tx.clone());
     led::start(&cfg);
 

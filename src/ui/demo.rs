@@ -95,10 +95,18 @@ fn render(c: &mut Canvas, f: &mut Fonts, ic: &mut IconCache, app: &mut App, dir:
         settle(app);
     }
     let path = dir.join(format!("{name}.png"));
-    match gfx::png::save_xrgb(&path, c.w, c.h, &c.px) {
-        Ok(()) => println!("wrote {}", path.display()),
-        Err(e) => eprintln!("{}: {e}", path.display()),
+    if let Err(e) = gfx::png::save_xrgb(&path, c.w, c.h, &c.px) {
+        eprintln!("{}: {e}", path.display());
+        return;
     }
+    // What one redraw of this screen costs, e.g. the once-a-second refresh while playing.
+    let frames = 60;
+    let t0 = Instant::now();
+    for _ in 0..frames {
+        draw::frame(c, f, ic, app);
+    }
+    let ms = t0.elapsed().as_secs_f64() * 1000.0 / frames as f64;
+    println!("wrote {} ({ms:.2} ms/frame)", path.display());
 }
 
 fn demo_library() -> Library {
@@ -296,8 +304,13 @@ pub fn screenshots(mut fonts: Fonts, dir: &Path) {
     render(&mut c, &mut fonts, &mut ic, &mut app, dir, "04_now_playing");
 
     app.stack.pop();
-    // A download server makes the menu long enough to scroll.
+    // A download server makes the menu long enough to scroll; a launcher
+    // waiting adds "Chạy nền", as on the device.
     app.cfg.slskd_url = "https://spoty.example".into();
+    let launcher = crate::background::pair().ok().map(|(holder, launcher)| {
+        app.holders.push(holder);
+        launcher
+    });
     app.open_menu();
     render(&mut c, &mut fonts, &mut ic, &mut app, dir, "05_menu");
     if let Some(m) = app.menu.as_mut() {
@@ -309,6 +322,8 @@ pub fn screenshots(mut fonts: Fonts, dir: &Path) {
     }
     render(&mut c, &mut fonts, &mut ic, &mut app, dir, "05b_menu_end");
     app.cfg.slskd_url.clear();
+    app.holders.clear();
+    drop(launcher);
     app.menu = None::<Menu>;
 
     app.stack.truncate(1);

@@ -21,6 +21,8 @@ const SYSFS: &str = "/sys/class/led_anim";
 /// Firmware effect number for a steady colour (see /sys/class/led_anim/help).
 const STATIC: &str = "4";
 const TICK: Duration = Duration::from_millis(33);
+/// How often a switched-off light thread looks at the switch.
+const IDLE_TICK: Duration = Duration::from_millis(250);
 /// Audio slices are cut this often.
 const SLICE_PER_SEC: u32 = 100;
 /// Slices not yet shown; about 6 s, far more than any output buffer.
@@ -264,23 +266,27 @@ struct Zone {
     scale: Option<String>,
 }
 
-/// Where each zone sits on the Brick Pro, as seen on the device:
-/// - back: the top-edge bar (`m`) and the shoulder-button lights, which are not
-///   `lr` on this model and so are any other zone (likely `l` / `r`); both pulse
+/// Which band drives a zone, as mapped on the Brick Pro with the LED check:
+/// - back: the top-edge bar (`m`) and the L1/L2/R1/R2 lights (`rear`) pulse
 ///   with the bass, as one,
 /// - front: the joystick rings (`lr`) follow the mids (vocals),
 /// - front: the two bars between the D-pad and the face buttons (`f1`, `f2`)
 ///   follow the treble.
-fn band_for(zone: &str) -> usize {
+///
+/// `l` and `r` are the Smart Pro's names for the joystick rings; where they
+/// exist they overlap `lr`, and driving both would flicker, so they are left
+/// alone. Any zone a later firmware adds joins the back.
+fn band_for(zone: &str) -> Option<usize> {
     match zone {
-        "lr" => 1,
-        "f1" | "f2" => 2,
-        _ => 0,
+        "l" | "r" => None,
+        "lr" => Some(1),
+        "f1" | "f2" => Some(2),
+        _ => Some(0),
     }
 }
 
 /// Shown first in the LED check: back, then front.
-const ORDER: [&str; 6] = ["m", "l", "r", "lr", "f1", "f2"];
+const ORDER: [&str; 5] = ["m", "rear", "lr", "f1", "f2"];
 
 /// Writes lights to the firmware's files, skipping values that did not change.
 pub struct Leds {
@@ -309,17 +315,18 @@ impl Leds {
         names.sort_by(|a, b| rank(a).cmp(&rank(b)).then_with(|| a.cmp(b)));
         let zones: Vec<Zone> = names
             .into_iter()
-            .map(|name| {
+            .filter_map(|name| {
+                let band = band_for(&name)?;
                 let scale = match name.as_str() {
                     "m" => "max_scale".to_string(),
                     "f1" | "f2" => "max_scale_f1f2".to_string(),
                     z => format!("max_scale_{z}"),
                 };
-                Zone {
-                    band: band_for(&name),
+                Some(Zone {
+                    band,
                     scale: base.join(&scale).exists().then_some(scale),
                     name,
-                }
+                })
             })
             .collect();
         if zones.is_empty() {
@@ -498,7 +505,8 @@ fn run(mut leds: Leds) {
     let mut on = false;
     let mut prev = Instant::now();
     while sh.running.load(Ordering::Relaxed) {
-        std::thread::sleep(TICK);
+        // Off, the thread only watches for being turned on: no need to wake 30 times a second.
+        std::thread::sleep(if on { TICK } else { IDLE_TICK });
         let now = Instant::now();
         let dt = (now - prev).as_secs_f32().min(0.2);
         prev = now;
@@ -711,9 +719,10 @@ mod tests {
         dir
     }
 
-    /// The Brick Pro's zones as seen on the device, plus the shoulder lights
-    /// on a zone of their own (`l`) with no brightness file.
-    const BRICK_PRO: [(&str, &str); 11] = [
+    /// The Brick Pro's zones as mapped on the device: the shoulder lights are
+    /// `rear` (no brightness file of their own here). `l` also exists, as on
+    /// the Smart Pro, and must be left alone.
+    const BRICK_PRO: [(&str, &str); 13] = [
         ("effect_m", "0"),
         ("effect_rgb_hex_m", "00FFFF"),
         ("max_scale", "30"),
@@ -723,16 +732,19 @@ mod tests {
         ("effect_f1", "4"),
         ("effect_rgb_hex_f1", "FF00FF"),
         ("max_scale_f1f2", "50"),
-        ("effect_l", "4"),
-        ("effect_rgb_hex_l", "80C0FF"),
+        ("effect_rear", "4"),
+        ("effect_rgb_hex_rear", "80C0FF"),
+        ("effect_l", "0"),
+        ("effect_rgb_hex_l", "000000"),
     ];
 
     #[test]
     fn back_strips_pulse_together_and_are_put_back() {
         let dir = fake_leds(&BRICK_PRO);
         let mut leds = Leds::open(&dir, 80).unwrap();
-        // Found by scanning, back first: top bar, shoulder, then the front.
-        assert_eq!(leds.zone_names(), vec!["m", "l", "lr", "f1"]);
+        // Found by scanning, back first: top bar, shoulder, then the front;
+        // the Smart Pro alias `l` is skipped.
+        assert_eq!(leds.zone_names(), vec!["m", "rear", "lr", "f1"]);
         leds.begin();
         let bass = Light { rgb: [255, 0, 0], level: 0.5 };
         let mid = Light { rgb: [0, 255, 0], level: 1.0 };
@@ -743,8 +755,9 @@ mod tests {
         assert_eq!(read("effect_rgb_hex_m"), "FF0000 ", "firmware wants a trailing space");
         assert_eq!(read("effect_m"), "4", "static effect re-armed for the new colour");
         assert_eq!(read("max_scale"), "40", "half of max brightness 80");
-        assert_eq!(read("effect_rgb_hex_l"), "800000 ", "no brightness file: the colour is dimmed");
-        assert_eq!(read("effect_l"), "4");
+        assert_eq!(read("effect_rgb_hex_rear"), "800000 ", "no brightness file: the colour is dimmed");
+        assert_eq!(read("effect_rear"), "4");
+        assert_eq!(read("effect_rgb_hex_l"), "000000", "alias untouched");
         // Front: joystick rings follow the mids, the F bars the treble.
         assert_eq!(read("effect_rgb_hex_lr"), "00FF00 ");
         assert_eq!(read("max_scale_lr"), "80");

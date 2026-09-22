@@ -7,6 +7,7 @@ use std::io::Read;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::OpenOptionsExt;
 use std::sync::mpsc::Sender;
+use std::time::Duration;
 
 use crate::config::Config;
 use crate::ui::UiMsg;
@@ -217,14 +218,28 @@ pub fn spawn(cfg: &Config, tx: Sender<UiMsg>) {
 }
 
 fn run(cfg: Config, keymap: HashMap<u16, Button>, tx: Sender<UiMsg>) {
-    let mut devices = open_devices(&cfg);
-    if devices.is_empty() {
-        log::error!("input: no /dev/input/event* devices could be opened");
-        return;
-    }
+    let mut devices: Vec<Device> = Vec::new();
+    let mut warned = false;
     let send = |b: Button, pressed: bool| tx.send(UiMsg::Input(b, pressed)).is_ok();
     let mut buf = [0u8; EVENT_SIZE * 64];
     loop {
+        if !super::input_on() {
+            // In the background: closing the devices also lets go of the power button.
+            devices.clear();
+            std::thread::sleep(Duration::from_millis(200));
+            continue;
+        }
+        if devices.is_empty() {
+            devices = open_devices(&cfg);
+            if devices.is_empty() {
+                if !warned {
+                    log::error!("input: no /dev/input/event* devices could be opened");
+                    warned = true;
+                }
+                std::thread::sleep(Duration::from_secs(1));
+                continue;
+            }
+        }
         let mut fds: Vec<libc::pollfd> = devices
             .iter()
             .map(|d| libc::pollfd {
@@ -233,9 +248,10 @@ fn run(cfg: Config, keymap: HashMap<u16, Button>, tx: Sender<UiMsg>) {
                 revents: 0,
             })
             .collect();
-        let r = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as _, -1) };
+        // Woken now and then to notice the app going to the background.
+        let r = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as _, 300) };
         if r < 0 {
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            std::thread::sleep(Duration::from_millis(10));
             continue;
         }
         for (idx, pfd) in fds.iter().enumerate() {

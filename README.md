@@ -98,14 +98,31 @@ Spotify và nhạc trên máy **dùng chung loa**: bên này phát thì bên kia
 
 **Nhấn cần analog phải** (R3) ở bất kỳ màn hình nào (hoặc **MENU → Đèn LED theo nhạc**) để đèn RGB của máy nháy theo bài đang phát, cả Spotify lẫn nhạc trên máy:
 
-- **mặt sau**: dải trên đỉnh máy và đèn cạnh các nút L1/L2/R1/R2 nháy giống hệt nhau theo tiếng trầm (trống, bass),
-- **vòng sáng quanh hai joystick** theo tiếng trung (giọng hát, nhạc cụ),
-- **hai thanh sáng giữa D-pad và nút ABXY** theo tiếng cao (hi-hat, cymbal),
+- **mặt sau**: dải trên đỉnh máy (vùng `m`) và đèn các nút L1/L2/R1/R2 (vùng `rear`) nháy giống hệt nhau theo tiếng trầm (trống, bass),
+- **vòng sáng quanh hai joystick** (vùng `lr`) theo tiếng trung (giọng hát, nhạc cụ),
+- **hai thanh sáng giữa D-pad và nút ABXY** (vùng `f1`, `f2`) theo tiếng cao (hi-hat, cymbal),
 - mỗi nhịp trống đổi sang màu mới.
 
 Đèn được canh theo độ trễ của bộ đệm âm thanh nên nháy đúng lúc tai nghe thấy, và tự tối đi khi dừng nhạc. Nhấn cần phải lần nữa để tắt: đèn trở lại đúng như trước khi bật. App nhớ lựa chọn này cho lần mở sau. Độ sáng tối đa chỉnh bằng `led_brightness`.
 
 **MENU → Kiểm tra đèn LED** bật lần lượt từng vùng đèn của firmware (màu trắng, tên vùng hiện trên màn hình) để biết vùng nào ứng với đèn nào trên máy. App tự dò mọi vùng firmware có, nên vẫn chạy nếu bản firmware sau thêm vùng mới.
+
+## Chạy nền: về menu máy mà nhạc vẫn phát
+
+**MENU → Chạy nền (về menu máy, nhạc vẫn phát)** đưa bạn về menu của máy trong khi nhạc (Spotify hoặc nhạc trên máy) vẫn phát tiếp. Lúc đó:
+
+- nút bấm, nút nguồn và nút âm lượng thuộc về hệ thống như bình thường;
+- Spotify vẫn là một thiết bị Connect: đổi bài, dừng, chỉnh âm lượng từ app Spotify trên điện thoại được;
+- việc tải nhạc từ máy chủ slskd vẫn chạy tiếp;
+- đèn LED theo nhạc (nếu đang bật) vẫn nháy.
+
+Mở lại **Spoty** từ menu máy để quay lại đúng màn hình cũ, gần như tức thì vì app không phải khởi động lại. **MENU → Thoát Spoty (tắt nhạc)** mới tắt hẳn.
+
+Nếu chạy nền mà không phát gì suốt 30 phút, Spoty tự thoát để máy được ngủ như thường (đổi bằng `background_quit_after_min`, 0 = không bao giờ).
+
+Lưu ý:
+- Bấm nút nguồn ở menu máy sẽ cho **cả máy** ngủ và nhạc dừng. Muốn tắt màn hình mà nhạc vẫn phát thì dùng nút nguồn **bên trong Spoty**.
+- Trong lúc nhạc phát nền, game hoặc app khác có thể không có tiếng nếu hệ thống không cho hai chương trình dùng loa cùng lúc. Tạm dừng nhạc là chúng có tiếng lại (Spoty nhả loa ngay khi dừng).
 
 ## Điều khiển
 
@@ -122,7 +139,7 @@ Spotify và nhạc trên máy **dùng chung loa**: bên này phát thì bên kia
 | L2 / R2 | Về đầu / cuối danh sách | — | Di chuyển con trỏ trong ô tìm kiếm |
 | SELECT | Nhảy tới bài đang phát | — | Xóa hết / hủy |
 | START | Tùy chọn (mở album/nghệ sĩ…) | Tùy chọn | Tìm / chọn thư mục |
-| MENU | Menu: nhạc trên máy, tải nhạc, nhận nhạc qua WiFi, cập nhật, tắt màn hình, đăng xuất, **thoát** | | |
+| MENU | Menu: nhạc trên máy, tải nhạc, nhận nhạc qua WiFi, cập nhật, tắt màn hình, đăng xuất, **chạy nền**, **thoát** | | |
 | Nguồn | Tắt/bật màn hình, **nhạc vẫn phát** | | |
 
 Ở **Dành cho bạn**: ▲▼ đổi kệ, ◀▶ chọn thẻ (L1/R1 nhảy 4 thẻ), A mở, X phát ngẫu nhiên, SELECT làm mới.
@@ -178,6 +195,7 @@ File này được tạo ở lần chạy đầu tiên, và tự thêm các khó
 | `audio_cache_mb` | `1024` | Cache nhạc Spotify trên thẻ (0 = tắt) |
 | `normalize` | `false` | Cân bằng âm lượng Spotify |
 | `screen_off_after_s` | `120` | Tự tắt màn hình khi đang phát (0 = không tắt) |
+| `background_quit_after_min` | `30` | Đang chạy nền mà không phát gì quá số phút này thì tự thoát (0 = không bao giờ) |
 | `grab_power_button` | `true` | Dùng nút nguồn để tắt/bật màn hình |
 | `rotate` | `0` | Xoay hình 0/90/180/270 |
 | `fb_double_buffer` | `false` | Lật trang framebuffer (thử nếu thấy hình bị xé) |
@@ -186,6 +204,7 @@ File này được tạo ở lần chạy đầu tiên, và tự thêm các khó
 ## Xử lý sự cố
 
 - **Nhật ký:** `data/spoty.log`; nếu app không mở được thì xem `data/launch.log`; lịch sử khôi phục bản cũ nằm ở `data/update.log`.
+- **Mở Spoty mà màn hình đen:** nếu bản đang chạy nền không phản hồi trong 10 giây, `launch.sh` tự tắt nó và mở bản mới.
 - **Lệnh kiểm tra** (chạy qua SSH trên máy, trong thư mục `Apps/Spoty`):
   - `./spoty --decode-test file.flac …`: giải mã trọn file, in định dạng, thời lượng, tốc độ giải mã, ảnh bìa.
   - `SPOTY_TEST_VOLUME=30 ./spoty --play-test a.flac b.mp3`: phát thật qua loa và in từng sự kiện.
@@ -226,6 +245,7 @@ src/
     art.rs           ảnh bìa nhúng / cover.jpg
   audio/             ALSA qua dlopen (dùng chung cho cả hai player), rodio trên PC
   update.rs          OTA: kiểm tra, tải (HTTPS + SHA-256), cài, khôi phục
+  background.rs      chạy nền: launch.sh (`spoty --attach`) gọi app lên màn hình và chờ app nhả ra
   ui/                trạng thái, phím, vòng lặp khung hình, vẽ từng màn hình
   gfx/               canvas phần mềm, chữ, icon vector, JPEG/PNG
   platform/          /dev/fb0, evdev, đèn nền, pin; cửa sổ minifb trên PC

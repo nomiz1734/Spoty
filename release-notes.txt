@@ -1,3 +1,5 @@
-• Đèn LED theo nhạc đúng bố cục Brick Pro: mặt sau (dải trên đỉnh và đèn cạnh nút vai) nháy giống hệt nhau theo tiếng trầm; vòng joystick theo giọng hát; hai thanh sáng mặt trước theo tiếng cao
-• App tự dò mọi vùng đèn firmware có. Thêm MENU > Kiểm tra đèn LED: bật từng vùng một để biết vùng nào là đèn nào
-• Menu dài không còn bị khuất: danh sách cuộn được, có thanh cuộn, L1/R1 nhảy 5 mục
+• MENU > Chạy nền: về menu máy mà nhạc vẫn phát tiếp, điều khiển được từ app Spotify trên điện thoại; mở lại Spoty là quay về đúng màn hình cũ
+• Chạy nền quá 30 phút không phát gì thì tự thoát để máy được ngủ (đổi bằng background_quit_after_min)
+• Cuộn menu và hộp thoại cập nhật mượt hơn (nhẹ hơn khoảng 3-4 lần mỗi khung hình)
+• Đỡ tốn pin: bớt vẽ thừa khi đang phát và khi quét thư viện, luồng đèn LED ngủ sâu hơn khi tắt đồng bộ
+• Vùng đèn các nút L1/L2/R1/R2 được gọi đúng tên "rear" như firmware Brick Pro

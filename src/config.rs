@@ -113,6 +113,9 @@ pub struct Config {
     pub led_sync: bool,
     /// Brightest the LEDs get while syncing, 0-100.
     pub led_brightness: u8,
+    /// In the background with nothing playing, quit after this many minutes
+    /// so the device can sleep again (0 = never).
+    pub background_quit_after_min: u32,
 }
 
 impl Default for Config {
@@ -147,6 +150,7 @@ impl Default for Config {
             slskd_delete_after: true,
             led_sync: false,
             led_brightness: 80,
+            background_quit_after_min: 30,
         }
     }
 }

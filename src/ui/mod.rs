@@ -14,12 +14,13 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::background::{self, Holder};
 use crate::config::{Config, Paths};
 use crate::download::{DownloadCmd, DownloadEvent, SearchResult, Stage};
 use crate::gfx::image::{accent_color, decode_png};
 use crate::gfx::{Canvas, Color, Fonts, Icon, IconCache, Image, RgbaImage};
 use crate::local::{self, LocalCmd, LocalEvent};
-use crate::platform::{self, Battery, Button, Screen};
+use crate::platform::{self, Battery, Button, Display, Screen};
 use crate::spotify::home::{FeedItem, FeedKind, FeedSection};
 use crate::spotify::{Cmd, ConnState, Event, PlaylistInfo, Repeat, Source, TrackInfo, TrackList};
 use crate::update::{self, UpdateInfo, UpdateState};
@@ -33,6 +34,9 @@ pub enum UiMsg {
     Local(LocalEvent),
     Download(DownloadEvent),
     Wifi(WifiEvent),
+    /// launch.sh asks for the screen (Spoty was started, or launched again
+    /// while playing in the background).
+    Show(Holder),
 }
 
 /// How the UI loop ended.
@@ -245,6 +249,8 @@ pub enum MenuAction {
     /// Light one LED zone at a time, to see which lights it drives.
     LedCheck,
     Logout,
+    /// Back to the system menu, music still playing.
+    Background,
     Exit,
 }
 
@@ -376,6 +382,18 @@ pub struct App {
     started: Instant,
     update_checked: bool,
     update_confirmed: bool,
+    /// On screen (false while playing in the background).
+    foreground: bool,
+    /// Launchers waiting for Spoty to leave the screen; none when it was
+    /// started some other way, and then it cannot go to the background.
+    pub holders: Vec<Holder>,
+    /// Set by the menu; the frame loop hands the screen back.
+    go_background: bool,
+    /// Since when nothing has played in the background.
+    bg_idle: Option<Instant>,
+    /// What lies under the menu or a dialog, already dimmed, and when (second
+    /// and dimming) it was drawn: while the menu scrolls only the menu is redrawn.
+    pub backdrop: Option<(Vec<u32>, u64)>,
 }
 
 fn percent_to_u16(p: u8) -> u16 {
@@ -451,6 +469,11 @@ impl App {
             started: Instant::now(),
             update_checked: false,
             update_confirmed: false,
+            foreground: true,
+            holders: Vec::new(),
+            go_background: false,
+            bg_idle: None,
+            backdrop: None,
             cfg,
             paths,
         }
@@ -922,7 +945,10 @@ impl App {
         if !self.logged_out() {
             items.push(("Đăng xuất Spotify".into(), MenuAction::Logout));
         }
-        items.push(("Thoát Spoty".into(), MenuAction::Exit));
+        if !self.holders.is_empty() {
+            items.push(("Chạy nền (về menu máy, nhạc vẫn phát)".into(), MenuAction::Background));
+        }
+        items.push(("Thoát Spoty (tắt nhạc)".into(), MenuAction::Exit));
         self.menu = Some(Menu {
             items,
             state: ListState::new(),
@@ -1000,13 +1026,65 @@ impl App {
                     m.confirm_logout = true;
                 }
             }
+            MenuAction::Background => self.go_background = true,
             MenuAction::Exit => self.quit = true,
+        }
+    }
+
+    // ------------------------------------------------------------ background
+
+    /// Leaves the screen to the system menu; the players, downloads and
+    /// Spotify Connect carry on. The frame loop lets go of the display.
+    fn enter_background(&mut self) {
+        // Screens that keep something running only while they are open.
+        if self.stack.iter().any(|v| matches!(v, View::LedTest(_))) {
+            crate::led::identify(None);
+        }
+        if self.stack.iter().any(|v| matches!(v, View::Wifi)) {
+            self.stop_wifi();
+        }
+        self.stack.retain(|v| !matches!(v, View::LedTest(_) | View::Wifi));
+        self.menu = None;
+        self.toast = None;
+        self.held.clear();
+        self.foreground = false;
+        self.bg_idle = None;
+        // Decoded covers come back from the SD card cache; a game may want the memory.
+        self.images = ImageStore::default();
+        self.backdrop = None;
+        log::info!("background: screen handed back to the system, music keeps playing");
+    }
+
+    fn come_back(&mut self) {
+        self.foreground = true;
+        self.screen_on = true;
+        self.idle_off = false;
+        self.last_input = Instant::now();
+        self.held.clear();
+        self.dirty = true;
+        log::info!("background: back on screen");
+    }
+
+    /// Quits after a long while in the background with nothing playing, so a
+    /// forgotten Spoty does not keep the device awake.
+    fn check_background_idle(&mut self) {
+        let minutes = self.cfg.background_quit_after_min;
+        let busy = self.pb.playing || self.other.playing || !self.dls.queue.is_empty();
+        if minutes == 0 || busy {
+            self.bg_idle = None;
+            return;
+        }
+        let since = *self.bg_idle.get_or_insert_with(Instant::now);
+        if since.elapsed() > Duration::from_secs(minutes as u64 * 60) {
+            log::info!("background: nothing played for {minutes} min, quitting");
+            self.quit = true;
         }
     }
 
     // ------------------------------------------------------------ events
 
     fn handle_backend(&mut self, ev: Event) {
+        let was_dirty = self.dirty;
         self.dirty = true;
         match ev {
             Event::Conn(state) => {
@@ -1082,6 +1160,7 @@ impl App {
                 let p = self.pb_for(Owner::Spotify);
                 p.pos_ms = ms;
                 p.pos_at = Instant::now();
+                self.dirty = was_dirty;
             }
             Event::Stopped => {
                 let p = self.pb_for(Owner::Spotify);
@@ -1161,6 +1240,7 @@ impl App {
     }
 
     fn handle_local(&mut self, ev: LocalEvent) {
+        let was_dirty = self.dirty;
         self.dirty = true;
         match ev {
             LocalEvent::Track(t) => {
@@ -1188,6 +1268,7 @@ impl App {
                 let p = self.pb_for(Owner::Local);
                 p.pos_ms = ms;
                 p.pos_at = Instant::now();
+                self.dirty = was_dirty;
             }
             LocalEvent::Shuffle(s) => self.pb_for(Owner::Local).shuffle = s,
             LocalEvent::QueueEnded => {
@@ -2135,7 +2216,7 @@ impl App {
 }
 
 pub fn run(
-    mut screen: Box<dyn Screen>,
+    mut screen: Display,
     mut fonts: Fonts,
     rx: Receiver<UiMsg>,
     tx: Sender<UiMsg>,
@@ -2177,10 +2258,11 @@ pub fn run(
 
     loop {
         // Wait for input/backend messages, or until the next thing needs drawing.
-        let mut timeout = if app.animating && app.screen_on {
+        let visible = app.foreground && app.screen_on;
+        let mut timeout = if app.animating && visible {
             // Cap animations at ~60 fps even if the display has no vsync.
             (last_frame + frame).saturating_duration_since(Instant::now())
-        } else if app.dirty && app.screen_on {
+        } else if app.dirty && visible {
             Duration::ZERO
         } else if screen.needs_polling() {
             frame
@@ -2200,13 +2282,19 @@ pub fn run(
             pending.push(m);
         }
         for m in pending {
+            if !matches!(m, UiMsg::Input(..)) {
+                // Something besides a key press changed: the backdrop may be stale.
+                app.backdrop = None;
+            }
             match m {
+                // Buttons belong to the system while Spoty is in the background.
+                UiMsg::Input(..) if !app.foreground => {}
                 UiMsg::Input(b, true) => {
                     if app.is_repeatable(b) {
                         let now = Instant::now();
                         app.held.insert(b, (now, now + Duration::from_millis(280)));
                     }
-                    app.handle_button(b, false, screen.as_mut());
+                    app.handle_button(b, false, &mut screen);
                 }
                 UiMsg::Input(b, false) => {
                     app.held.remove(&b);
@@ -2215,12 +2303,36 @@ pub fn run(
                 UiMsg::Local(ev) => app.handle_local(ev),
                 UiMsg::Download(ev) => app.handle_download(ev),
                 UiMsg::Wifi(ev) => app.handle_wifi(ev),
+                UiMsg::Show(mut holder) => {
+                    if !app.foreground {
+                        if let Err(e) = screen.acquire() {
+                            log::error!("background: cannot take the screen back: {e}");
+                            app.quit = true;
+                        }
+                        platform::set_input(true);
+                        app.come_back();
+                    }
+                    holder.shown();
+                    app.holders.push(holder);
+                }
+            }
+        }
+        if app.go_background {
+            app.go_background = false;
+            if !app.holders.is_empty() {
+                app.enter_background();
+                platform::set_input(false);
+                screen.release();
+                // Only now, with the screen let go, may the launcher take over.
+                for h in app.holders.drain(..) {
+                    h.release(false);
+                }
             }
         }
         if !screen.pump(&tx) {
             break;
         }
-        app.tick_repeats(screen.as_mut());
+        app.tick_repeats(&mut screen);
 
         let now = Instant::now();
         let dt = now.duration_since(last_frame).as_secs_f32().min(0.1);
@@ -2236,7 +2348,11 @@ pub fn run(
             if app.pb.playing || second % 60 == 0 || app.local.scanning.is_some() {
                 app.dirty = true;
             }
-            app.check_idle(screen.as_mut());
+            if app.foreground {
+                app.check_idle(&mut screen);
+            } else {
+                app.check_background_idle();
+            }
             app.tick_background();
             if app.battery_at.elapsed() > Duration::from_secs(30) {
                 app.battery = platform::read_battery();
@@ -2246,7 +2362,7 @@ pub fn run(
         if app.quit {
             break;
         }
-        if app.dirty && app.screen_on {
+        if app.dirty && app.screen_on && app.foreground {
             app.dirty = false;
             draw::frame(&mut canvas, &mut fonts, &mut icons, &mut app);
             screen.present(&canvas);
@@ -2257,6 +2373,16 @@ pub fn run(
         }
     }
 
+    // Give the screen back first, so the launcher can take over at once
+    // while the players shut down. After an update the launcher is not told:
+    // it waits for the new version to start.
+    screen.release();
+    background::forget();
+    if !app.restart {
+        for h in app.holders.drain(..) {
+            h.release(true);
+        }
+    }
     // Remember the local volume, stop both players and wait briefly for Spotify.
     app.cfg.save(&app.paths);
     app.stop_wifi();
@@ -2274,5 +2400,112 @@ pub fn run(
         Exit::Restart
     } else {
         Exit::Quit
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{BufRead, BufReader};
+    use std::net::TcpStream;
+    use std::sync::Mutex;
+
+    /// Records what the frame loop does with the screen.
+    struct FakeScreen(Arc<Mutex<Vec<&'static str>>>);
+
+    impl Screen for FakeScreen {
+        fn size(&self) -> (usize, usize) {
+            (1024, 768)
+        }
+        fn present(&mut self, _frame: &Canvas) {
+            self.0.lock().unwrap().push("frame");
+        }
+        fn set_backlight(&mut self, _on: bool) {}
+    }
+
+    impl Drop for FakeScreen {
+        fn drop(&mut self) {
+            self.0.lock().unwrap().push("released");
+        }
+    }
+
+    fn line(r: &mut BufReader<TcpStream>) -> String {
+        let mut s = String::new();
+        r.read_line(&mut s).unwrap();
+        s.trim().to_string()
+    }
+
+    fn press(tx: &Sender<UiMsg>, keys: &[Button]) {
+        for &b in keys {
+            tx.send(UiMsg::Input(b, true)).unwrap();
+            tx.send(UiMsg::Input(b, false)).unwrap();
+        }
+    }
+
+    /// MENU > Chạy nền gives the screen back and tells the launcher only then;
+    /// launching again takes it back; MENU > Thoát says "quit".
+    #[test]
+    fn goes_to_the_background_and_comes_back() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let opener_log = log.clone();
+        let open = move || {
+            opener_log.lock().unwrap().push("open");
+            Ok(Box::new(FakeScreen(opener_log.clone())) as Box<dyn Screen>)
+        };
+        let dir = std::env::temp_dir().join(format!("spoty-bg-test-{}", std::process::id()));
+        let paths = Paths {
+            app_dir: dir.clone(),
+            data_dir: dir.join("data"),
+        };
+        let _ = std::fs::create_dir_all(&paths.data_dir);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (cmd, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (dl, _dl_rx) = tokio::sync::mpsc::unbounded_channel();
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let handle = rt.handle().clone();
+        let fonts = Fonts::load(&dir);
+        let ui_tx = tx.clone();
+        let ui = std::thread::spawn(move || {
+            let display = Display::with(Box::new(open)).unwrap();
+            run(display, fonts, rx, ui_tx, cmd, dl, handle, Config::default(), paths)
+        });
+
+        // Started by launch.sh: on screen at once.
+        let (holder, launcher) = crate::background::pair().unwrap();
+        let mut launcher = BufReader::new(launcher);
+        tx.send(UiMsg::Show(holder)).unwrap();
+        assert_eq!(line(&mut launcher), "shown");
+
+        // MENU, Up twice (past "Thoát" to "Chạy nền"), A.
+        press(&tx, &[Button::Menu, Button::Up, Button::Up, Button::A]);
+        assert_eq!(line(&mut launcher), "bg");
+        {
+            let log = log.lock().unwrap();
+            assert_eq!(log.last(), Some(&"released"), "screen let go before the launcher is told: {log:?}");
+        }
+        // In the background: buttons are the system's, nothing is drawn.
+        press(&tx, &[Button::Menu, Button::A]);
+        std::thread::sleep(Duration::from_millis(1200));
+        assert_eq!(log.lock().unwrap().last(), Some(&"released"));
+
+        // Launched again from the system menu.
+        let (holder, launcher) = crate::background::pair().unwrap();
+        let mut launcher = BufReader::new(launcher);
+        tx.send(UiMsg::Show(holder)).unwrap();
+        assert_eq!(line(&mut launcher), "shown");
+        std::thread::sleep(Duration::from_millis(100));
+        {
+            let log = log.lock().unwrap();
+            let opened = log.iter().filter(|e| **e == "open").count();
+            assert_eq!(opened, 2, "{log:?}");
+            assert_eq!(log.last(), Some(&"frame"), "drawn again once back: {log:?}");
+        }
+
+        // MENU, Up (wraps to "Thoát"), A.
+        press(&tx, &[Button::Menu, Button::Up, Button::A]);
+        assert_eq!(line(&mut launcher), "quit");
+        tx.send(UiMsg::Backend(Event::ShutdownDone)).unwrap();
+        assert!(ui.join().unwrap() == Exit::Quit);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

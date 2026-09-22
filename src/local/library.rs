@@ -223,6 +223,7 @@ pub fn spawn_scan(root: PathBuf, cache: PathBuf, tx: Sender<UiMsg>) {
             let files = walk(&root);
             let total = files.len();
             send(LocalEvent::ScanProgress { done: 0, total });
+            let mut reported = std::time::Instant::now();
             let mut tracks = Vec::with_capacity(total);
             for (i, (path, size, mtime)) in files.into_iter().enumerate() {
                 let key = path.to_string_lossy().to_string();
@@ -233,7 +234,8 @@ pub fn spawn_scan(root: PathBuf, cache: PathBuf, tx: Sender<UiMsg>) {
                 if let Some(t) = reuse.or_else(|| read_track(&root, &path, size, mtime)) {
                     tracks.push(t);
                 }
-                if i % 25 == 24 {
+                if reported.elapsed() >= std::time::Duration::from_millis(250) {
+                    reported = std::time::Instant::now();
                     send(LocalEvent::ScanProgress { done: i + 1, total });
                 }
             }
